@@ -15,8 +15,11 @@
 import config from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 
-/** Codes expire quickly; the template says so, so the message is self-explanatory. */
-const TEMPLATE_NAME = 'login_code';
+/**
+ * Meta rejects the whole message if the components do not match the approved template
+ * exactly, and the error it returns names a parameter index rather than the problem. So
+ * the shape is configuration, not an assumption: see WHATSAPP_TEMPLATE_* in .env.example.
+ */
 
 /**
  * @returns {Promise<{ delivered: boolean, providerMessageId: string|null, devCode?: string }>}
@@ -45,16 +48,19 @@ export async function sendLoginCode({ phone, code, ttlMinutes }) {
       to: phone,
       type: 'template',
       template: {
-        name: TEMPLATE_NAME,
-        language: { code: 'en' },
+        name: config.whatsapp.templateName,
+        language: { code: config.whatsapp.templateLanguage },
         components: [
           { type: 'body', parameters: [{ type: 'text', text: code }] },
-          // Meta requires the code to be repeated as a button parameter on
-          // authentication templates, so the recipient gets a one-tap copy.
-          {
-            type: 'button', sub_type: 'url', index: '0',
-            parameters: [{ type: 'text', text: code }],
-          },
+          // The code repeated as a button parameter, which authentication templates with
+          // a copy-code button require. Omitted when the template has no button, because
+          // sending a component the template does not declare is rejected.
+          ...(config.whatsapp.templateHasButton
+            ? [{
+                type: 'button', sub_type: 'url', index: '0',
+                parameters: [{ type: 'text', text: code }],
+              }]
+            : []),
         ],
       },
     }),
@@ -65,10 +71,24 @@ export async function sendLoginCode({ phone, code, ttlMinutes }) {
   const body = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    // Deliberately vague to the caller, specific in the log. "That number is not on
-    // WhatsApp" tells an attacker which numbers exist.
-    logger.error({ status: response.status, error: body?.error, phone }, 'login code send failed');
-    return { delivered: false, providerMessageId: null };
+    const meta = body?.error ?? {};
+    // Deliberately vague to the CALLER -- "that number is not on WhatsApp" tells an
+    // attacker which numbers exist. Specific in the log, including the fields Meta only
+    // puts in error_data: during setup the difference between a wrong template name, an
+    // unapproved template and a bad token is the whole problem, and the top-level
+    // message says the same thing for all three.
+    logger.error({
+      status: response.status,
+      code: meta.code,
+      subcode: meta.error_subcode,
+      metaMessage: meta.message,
+      details: meta.error_data?.details,
+      template: config.whatsapp.templateName,
+      language: config.whatsapp.templateLanguage,
+      hasButton: config.whatsapp.templateHasButton,
+      phone,
+    }, 'login code send failed');
+    return { delivered: false, providerMessageId: null, error: meta.error_data?.details ?? meta.message };
   }
 
   return { delivered: true, providerMessageId: body?.messages?.[0]?.id ?? null };

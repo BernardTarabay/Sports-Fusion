@@ -81,6 +81,17 @@ const schema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_API_VERSION: z.string().default('v21.0'),
+  // Meta's own name for the template, which is whatever you called it when you created
+  // it. Hardcoding ours meant a working account still failed, with an error that only
+  // said the template did not exist.
+  WHATSAPP_TEMPLATE_NAME: z.string().default('login_code'),
+  // Authentication templates usually carry a copy-code button, and the API then REQUIRES
+  // the code repeated as a button parameter. If yours has no button, sending one is
+  // rejected outright -- so which shape it is has to be stated, not assumed.
+  WHATSAPP_TEMPLATE_HAS_BUTTON: flag(true),
+  // Meta matches the template to the recipient by language. 'en' and 'en_US' are
+  // different templates as far as the API is concerned.
+  WHATSAPP_TEMPLATE_LANGUAGE: z.string().default('en'),
 
   SHOPIFY_ENABLED: flag(),
   SHOPIFY_SHOP_DOMAIN: z.string().optional(),
@@ -145,6 +156,9 @@ export const config = Object.freeze({
     phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID,
     accessToken: env.WHATSAPP_ACCESS_TOKEN,
     apiVersion: env.WHATSAPP_API_VERSION,
+    templateName: env.WHATSAPP_TEMPLATE_NAME,
+    templateHasButton: env.WHATSAPP_TEMPLATE_HAS_BUTTON,
+    templateLanguage: env.WHATSAPP_TEMPLATE_LANGUAGE,
   },
 
   shopify: {
