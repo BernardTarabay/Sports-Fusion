@@ -63,7 +63,7 @@ function DesktopNav() {
   return (
     <header className="sticky top-0 z-40 hidden border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/85 backdrop-blur-lg lg:block">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-6">
-        <Link to="/" className="shrink-0" aria-label="Sports Fusion home">
+        <Link to="/" className="flex min-h-11 shrink-0 items-center" aria-label="Sports Fusion home">
           <Logo className="h-7" />
         </Link>
 
@@ -126,15 +126,15 @@ function MobileHeader() {
     <>
       <header className="sticky top-0 z-40 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/90 backdrop-blur-lg lg:hidden">
         <div className="flex h-14 items-center gap-3 px-4">
-          <Link to="/" aria-label="Sports Fusion home">
+          <Link to="/" className="flex min-h-11 items-center" aria-label="Sports Fusion home">
             <Logo className="h-6" compact />
           </Link>
           <div className="flex-1" />
-          <ThemeToggle className="size-9" />
+          <ThemeToggle className="size-9 pointer-coarse:size-11" />
           {isAuthenticated ? (
             <button
               onClick={() => setOpen(true)}
-              className="rounded-full"
+              className="grid min-h-11 min-w-11 place-items-center rounded-full"
               aria-label="Open menu"
             >
               <Avatar name={user?.displayName} size="sm" />

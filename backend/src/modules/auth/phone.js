@@ -13,7 +13,7 @@
 import { randomInt, createHash } from 'node:crypto';
 import { withTransaction } from '../../database/pool.js';
 import { UnauthorizedError, ConflictError, ValidationError, RateLimitError } from '../../lib/errors.js';
-import { sendLoginCode } from '../../integrations/whatsapp/otp.js';
+import { sendLoginCode } from '../../integrations/otp/index.js';
 import { issueSession, publicUser, loadRoles } from './service.js';
 
 const CODE_TTL_MINUTES = 10;

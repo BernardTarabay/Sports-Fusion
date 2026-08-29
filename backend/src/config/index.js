@@ -77,6 +77,18 @@ const schema = z.object({
   BALANCER_SHORTLIST_SIZE: z.coerce.number().int().positive().default(50),
   BALANCER_ALGORITHM_VERSION: z.string().default('exhaustive_v1'),
 
+  // Where login codes go. 'log' writes them to the server log and returns them to the
+  // client, which is right for development and is the default precisely so that a
+  // half-configured deploy cannot silently swallow them.
+  OTP_PROVIDER: z.enum(['log', 'whatsapp', 'twilio']).optional(),
+
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  // A bare number, or a Messaging Service that owns several. The service handles sender
+  // selection, opt-outs and per-country rules; a number does none of that.
+  TWILIO_FROM: z.string().optional(),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+
   WHATSAPP_ENABLED: flag(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
@@ -115,7 +127,23 @@ if (!parsed.success) {
 const env = parsed.data;
 
 // Integrations that are switched on must actually be configured.
-if (env.WHATSAPP_ENABLED && (!env.WHATSAPP_PHONE_NUMBER_ID || !env.WHATSAPP_ACCESS_TOKEN)) {
+// OTP_PROVIDER is authoritative, but WHATSAPP_ENABLED=true already means "send codes over
+// WhatsApp" on deployed environments, so it still selects the provider when nothing else
+// does. Setting OTP_PROVIDER explicitly overrides it.
+const otpProvider = env.OTP_PROVIDER ?? (env.WHATSAPP_ENABLED ? 'whatsapp' : 'log');
+
+// Refuse to start half-configured rather than accept codes and drop them. A login code
+// that is silently never sent looks, to the person waiting, exactly like a broken app.
+if (otpProvider === 'twilio' && (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN)) {
+  console.error('\nOTP_PROVIDER is twilio but TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are missing.\n');
+  process.exit(1);
+}
+if (otpProvider === 'twilio' && !env.TWILIO_FROM && !env.TWILIO_MESSAGING_SERVICE_SID) {
+  console.error('\nOTP_PROVIDER is twilio but neither TWILIO_FROM nor TWILIO_MESSAGING_SERVICE_SID is set.\n');
+  process.exit(1);
+}
+
+if (otpProvider === 'whatsapp' && (!env.WHATSAPP_PHONE_NUMBER_ID || !env.WHATSAPP_ACCESS_TOKEN)) {
   console.error('\nWHATSAPP_ENABLED is true but phone number id / access token are missing.\n');
   process.exit(1);
 }
@@ -149,6 +177,15 @@ export const config = Object.freeze({
   balancer: {
     shortlistSize: env.BALANCER_SHORTLIST_SIZE,
     algorithmVersion: env.BALANCER_ALGORITHM_VERSION,
+  },
+
+  otp: { provider: otpProvider },
+
+  twilio: {
+    accountSid: env.TWILIO_ACCOUNT_SID,
+    authToken: env.TWILIO_AUTH_TOKEN,
+    from: env.TWILIO_FROM,
+    messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
   },
 
   whatsapp: {

@@ -41,7 +41,7 @@ export function AdminLayout() {
     <div className="min-h-svh bg-[var(--bg-canvas)]">
       <header className="sticky top-0 z-40 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-4 px-4 sm:px-6">
-          <Link to="/admin" className="flex items-center gap-2">
+          <Link to="/admin" className="flex min-h-11 items-center gap-2">
             <Logo className="h-6" compact />
             <span className="display text-lg">Operations</span>
           </Link>
@@ -71,7 +71,7 @@ export function AdminLayout() {
 
           <Link
             to="/"
-            className="flex items-center gap-1.5 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+            className="flex min-h-11 items-center gap-1.5 px-1 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
           >
             <ArrowLeft className="size-4" /> Player view
           </Link>

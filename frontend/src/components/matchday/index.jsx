@@ -384,7 +384,7 @@ export function ScoreControl({ score, onChange, editable = true, className }) {
         {editable && (
           <button
             onClick={() => onSet(Math.max(0, value - 1))}
-            className="grid size-9 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] active:scale-90"
+            className="grid size-9 pointer-coarse:size-11 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] active:scale-90"
             aria-label={`${colour} goal down`}
           >
             <Minus className="size-4" />
@@ -396,7 +396,7 @@ export function ScoreControl({ score, onChange, editable = true, className }) {
         {editable && (
           <button
             onClick={() => onSet(value + 1)}
-            className="grid size-9 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] active:scale-90"
+            className="grid size-9 pointer-coarse:size-11 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] active:scale-90"
             aria-label={`${colour} goal up`}
           >
             <Plus className="size-4" />
@@ -597,7 +597,7 @@ export function PaymentSummary({
                 onClick={() => onSelectPlayer?.(entry)}
                 disabled={locked}
                 className={cn(
-                  'flex min-h-9 items-center gap-1.5 rounded-full border border-dashed border-[var(--danger)] px-3 py-1.5 text-xs font-medium text-[var(--danger-soft-fg)]',
+                  'flex min-h-9 pointer-coarse:min-h-11 items-center gap-1.5 rounded-full border border-dashed border-[var(--danger)] px-3 py-1.5 text-xs font-medium text-[var(--danger-soft-fg)]',
                   locked ? 'opacity-50' : 'hover:bg-[var(--danger-soft)] active:scale-95'
                 )}
               >
@@ -689,7 +689,11 @@ export function GameStatusRail({ status, className }) {
   const currentIndex = LIFECYCLE.findIndex((s) => s.key === status);
 
   return (
-    <ol className={cn('flex items-center gap-1 overflow-x-auto scrollbar-none', className)}>
+    // min-w-0 is what makes overflow-x-auto actually work here. A flex item defaults
+    // to min-width:auto, which means it refuses to shrink below its content -- so the
+    // rail widened the whole page by 100px on a phone instead of scrolling inside
+    // itself, and every screen using it scrolled sideways.
+    <ol className={cn('flex min-w-0 max-w-full items-center gap-1 overflow-x-auto scrollbar-none', className)}>
       {LIFECYCLE.map((stage, i) => {
         const done = i < currentIndex;
         const active = i === currentIndex;

@@ -30,7 +30,10 @@ const BUTTON_VARIANTS = {
 };
 
 const BUTTON_SIZES = {
-  sm: 'h-8 px-3 text-[0.8125rem] gap-1.5 rounded-[var(--radius-sm)]',
+  // pointer-coarse raises this on touch devices only. 32px is fine under a mouse and
+  // too small under a thumb -- and this app is used outdoors, at night, one-handed,
+  // by someone also watching a football match.
+  sm: 'h-8 pointer-coarse:h-11 px-3 pointer-coarse:px-4 text-[0.8125rem] gap-1.5 rounded-[var(--radius-sm)]',
   // 44px: the minimum comfortable touch target, and most of this app is used on a phone.
   md: 'h-11 px-4 text-sm gap-2 rounded-[var(--radius-md)]',
   lg: 'h-13 px-6 text-base gap-2.5 rounded-[var(--radius-md)]',
@@ -189,7 +192,9 @@ export function TabsList({ className, children, ...props }) {
   return (
     <RadixTabs.List
       className={cn(
-        'flex gap-1 overflow-x-auto scrollbar-none p-1 rounded-[var(--radius-md)] bg-[var(--bg-sunken)]',
+        // min-w-0: without it a flex item will not shrink below its content, and the
+        // scroll container widens its parent instead of scrolling.
+        'flex min-w-0 max-w-full gap-1 overflow-x-auto scrollbar-none p-1 rounded-[var(--radius-md)] bg-[var(--bg-sunken)]',
         className
       )}
       {...props}
@@ -203,7 +208,7 @@ export function TabsTrigger({ className, children, ...props }) {
   return (
     <RadixTabs.Trigger
       className={cn(
-        'shrink-0 px-3.5 h-9 rounded-[var(--radius-sm)] text-sm font-medium whitespace-nowrap',
+        'shrink-0 px-3.5 h-9 pointer-coarse:h-11 rounded-[var(--radius-sm)] text-sm font-medium whitespace-nowrap',
         'text-[var(--fg-secondary)] transition-colors',
         'data-[state=active]:bg-[var(--bg-surface)] data-[state=active]:text-[var(--fg-primary)] data-[state=active]:shadow-sm',
         className
@@ -383,7 +388,9 @@ export function Segmented({ options, value, onChange, className, size = 'md' }) 
             onClick={() => onChange(key)}
             className={cn(
               'shrink-0 rounded-[var(--radius-sm)] font-medium whitespace-nowrap transition-colors',
-              size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-9 px-3.5 text-sm',
+              size === 'sm'
+                ? 'h-7 pointer-coarse:h-10 px-2.5 pointer-coarse:px-3.5 text-xs'
+                : 'h-9 pointer-coarse:h-11 px-3.5 text-sm',
               active
                 ? 'bg-[var(--bg-surface)] text-[var(--fg-primary)] shadow-sm'
                 : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'

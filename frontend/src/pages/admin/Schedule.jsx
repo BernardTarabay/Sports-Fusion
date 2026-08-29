@@ -87,7 +87,7 @@ function ScheduleCard({ schedule, onToggle, onDelete }) {
       {/* The point of the page: what this rule produces next. */}
       <div className="border-t border-[var(--border-subtle)] px-4 py-3">
         <p className="eyebrow mb-2 text-[0.5625rem]">Next fixtures</p>
-        <div className="flex gap-2 overflow-x-auto scrollbar-none">
+        <div className="flex min-w-0 max-w-full gap-2 overflow-x-auto scrollbar-none">
           {(schedule.upcoming ?? []).map((iso, i) => (
             <div
               key={iso}
