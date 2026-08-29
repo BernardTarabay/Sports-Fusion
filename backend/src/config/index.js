@@ -26,7 +26,15 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   PUBLIC_WEB_URL: z.string().url().default('http://localhost:5173'),
 
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Parsed here so a malformed one fails at startup with a sentence, not fifty lines
+  // down inside the driver with the value redacted. `pg` only rejects a connection
+  // string outright when the PORT will not parse -- everything else it accepts and then
+  // fails to connect much later -- so that is what this is really catching.
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').refine(
+    (v) => { try { new URL(v); return true; } catch { return false; } },
+    'DATABASE_URL is not a valid URL. The usual cause is a partial paste: check the '
+    + 'port is a number, as in @host:5432/postgres, and that the whole string is there.'
+  ),
   // PGlite (the Docker-free dev database) serves one connection at a time; anything
   // above 1 there queues until it times out. Real Postgres wants the default.
   DATABASE_POOL_MAX: z.coerce.number().int().positive().optional(),
