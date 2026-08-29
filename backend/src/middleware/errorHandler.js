@@ -19,6 +19,19 @@ const PG_ERRORS = {
   '40001': { status: 503, code: 'CONFLICT_RETRY', message: 'Busy right now, please try again' },
 };
 
+// Body-parser failures. These happen before any route runs, so nothing downstream can
+// give them a sensible message -- and left unmapped they become a 500, which says the
+// server is broken when the truth is the request was too big or the JSON was malformed.
+const PARSER_ERRORS = {
+  'entity.too.large': {
+    status: 413, code: 'PAYLOAD_TOO_LARGE',
+    message: 'That request is too large. If it is an image, it needs downscaling first.',
+  },
+  'entity.parse.failed': {
+    status: 400, code: 'MALFORMED_JSON', message: 'That request body is not valid JSON',
+  },
+};
+
 // The one constraint whose violation has a genuinely useful public meaning.
 const CONSTRAINT_MESSAGES = {
   games_not_overbooked: { status: 409, code: 'GAME_FULL', message: 'This game is full' },
@@ -29,6 +42,11 @@ const CONSTRAINT_MESSAGES = {
 
 // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity
 export function errorHandler(err, req, res, _next) {
+  const parser = PARSER_ERRORS[err.type];
+  if (parser) {
+    return res.status(parser.status).json({ error: { code: parser.code, message: parser.message } });
+  }
+
   let status = 500;
   let code = 'INTERNAL_ERROR';
   let message = 'Something went wrong on our end';

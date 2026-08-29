@@ -54,7 +54,12 @@ export function createApp() {
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   }));
 
-  app.use(express.json({ limit: '100kb' }));
+  // 512kb, not 100kb. Venue badges are stored inline as data URIs, and the schema
+  // permits 400kb of them -- so a 100kb body limit meant any logo between the two was
+  // rejected by the body parser BEFORE validation ran, surfacing as a 500 with no
+  // explanation instead of the size message the schema was written to give. The two
+  // numbers have to agree, and the parser has to be the looser of them.
+  app.use(express.json({ limit: '512kb' }));
   app.use(cookieParser());
 
   app.use(pinoHttp({

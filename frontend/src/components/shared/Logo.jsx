@@ -1,31 +1,27 @@
 // The mark.
 //
-// Two arcs meeting: the centre circle of a pitch, split and fused. It reads at 20px in a
-// bottom bar and at 200px on the landing page, and it is a shape rather than a football
-// clip-art -- the identity should survive being printed in one colour on a shirt.
+// The company logo, as a raster image. It arrived as a 447px JPEG, so it is drawn rather
+// than inlined as SVG -- which means it cannot take `currentColor` and does not recolour
+// with the theme. It carries its own near-black background, which reads correctly in both
+// light and dark, but a vector version would be better: crisper at 512px on a home
+// screen, and able to invert.
+//
+// `alt=""` throughout: the mark always sits next to the words "SPORTS FUSION", and a
+// screen reader announcing the name twice is noise.
 
 import { cn } from '../../lib/cn.js';
 
+const LOGO_SRC = '/icon-512.png';
+
 export function LogoMark({ className, ...props }) {
   return (
-    <svg viewBox="0 0 32 32" className={cn('shrink-0', className)} aria-hidden="true" {...props}>
-      <circle cx="16" cy="16" r="14.5" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-      {/* Two halves of a centre circle, offset -- the "fusion". */}
-      <path
-        d="M16 3.5a12.5 12.5 0 0 0 0 25"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-      />
-      <path
-        d="M16 6.5a9.5 9.5 0 0 1 0 19"
-        fill="none"
-        stroke="var(--accent)"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-      />
-    </svg>
+    <img
+      src={LOGO_SRC}
+      alt=""
+      // The source is square, so object-contain keeps it square at any box it is given.
+      className={cn('shrink-0 rounded-[var(--radius-sm)] object-contain', className)}
+      {...props}
+    />
   );
 }
 
