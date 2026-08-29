@@ -209,6 +209,44 @@ const Marker = memo(function Marker({
    MatchPitch
    -------------------------------------------------------------------------- */
 
+/**
+ * A position with nobody in it.
+ *
+ * Drawn rather than left blank, because an empty half of a pitch is indistinguishable
+ * from a broken one. The shape of the team is the useful information well before the
+ * team is full: an admin looking at four defenders and two empty midfield slots knows
+ * exactly what they are still short of.
+ *
+ * Also a drop target, so a player can be dragged into a gap rather than only swapped
+ * with somebody who is already on.
+ */
+function EmptySlot({ slot, x, y, r, isHovered }) {
+  return (
+    <g
+      transform={`translate(${x} ${y})`}
+      className="pointer-events-none"
+      aria-hidden="true"
+    >
+      <circle
+        r={r}
+        fill="var(--pitch-empty-fill, rgb(255 255 255 / 0.05))"
+        stroke={isHovered ? 'var(--accent)' : 'rgb(255 255 255 / 0.35)'}
+        strokeWidth={isHovered ? 2.5 : 1.5}
+        strokeDasharray={isHovered ? 'none' : '4 3'}
+      />
+      <text
+        y={r * 0.32}
+        textAnchor="middle"
+        className="pointer-events-none select-none"
+        fill="rgb(255 255 255 / 0.55)"
+        style={{ fontSize: r * 0.62, fontWeight: 700, letterSpacing: '0.02em' }}
+      >
+        {slot.label}
+      </text>
+    </g>
+  );
+}
+
 export function MatchPitch({
   teams = [],
   formation,
@@ -412,6 +450,25 @@ export function MatchPitch({
           const colour = TEAM_COLOURS[team.color] ?? TEAM_COLOURS.black;
           return (
             <g key={team.id ?? team.color}>
+              {/* The positions nobody is standing in yet. Rendered first so a real
+                  player always paints over an empty disc, never under it. */}
+              {Array.from(
+                { length: Math.max(0, slots.length - (team.players?.length ?? 0)) },
+                (_, k) => {
+                  const i = (team.players?.length ?? 0) + k;
+                  const slot = slots[i];
+                  if (!slot) return null;
+                  const { x, y } = place(slot, teamIndex);
+                  const hovered = hoverSlot?.teamId === team.id && hoverSlot?.slotIndex === i;
+                  return (
+                    <EmptySlot
+                      key={`empty-${team.id ?? team.color}-${i}`}
+                      slot={slot} x={x} y={y} r={markerRadius} isHovered={hovered}
+                    />
+                  );
+                }
+              )}
+
               {(team.players ?? []).map((player, i) => {
                 const slot = slots[i] ?? slots[slots.length - 1];
                 const { x, y } = place(slot, teamIndex);

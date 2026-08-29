@@ -178,6 +178,58 @@ export default function Matchday() {
   }, [game]);
 
   const formation = game?.formation ?? defaultFormation(game?.teamSize ?? 11);
+
+  /**
+   * A lineup to look at before the teams are real.
+   *
+   * The pitch used to appear only once the balancer had run, which needs a full roster --
+   * so for the entire period when an admin is actually watching people sign up, the main
+   * screen of the app showed a message instead of a pitch. That is backwards: the shape
+   * of the team is most useful while it is still forming.
+   *
+   * Split by snake draft on rating (1,2,2,1) rather than alternating, which keeps the two
+   * sides close without pretending to be the balancer. This is a PREVIEW: it never posts
+   * anywhere, and the real teams still come from the server, which enumerates every split
+   * rather than guessing. The UI has to say so, or an admin will think the teams are set.
+   */
+  const provisionalTeams = useMemo(() => {
+    const roster = game?.roster ?? [];
+    if (game?.teams?.length || roster.length === 0) return [];
+
+    const size = game?.teamSize ?? 11;
+    const ranked = [...roster].sort((a, b) => (b.ratingMu ?? 1500) - (a.ratingMu ?? 1500));
+    const sides = [[], []];
+    ranked.forEach((p, i) => {
+      // 0,1,1,0,0,1,1,0 -- the strongest two are split, then the next two swap back.
+      const side = Math.floor(i / 2) % 2 === 0 ? i % 2 : 1 - (i % 2);
+      if (sides[side].length < size) sides[side].push(p);
+      else sides[1 - side].push(p);
+    });
+
+    return ['black', 'white'].map((colour, i) => ({
+      id: `provisional-${colour}`,
+      color: colour,
+      provisional: true,
+      players: fitSquadToFormation(
+        sides[i].map((r) => ({
+          id: r.playerId,
+          name: r.name,
+          position: r.position,
+          isGoalkeeper: r.isGoalkeeper,
+          ratingMu: r.ratingMu,
+          paid: r.paid,
+          goals: r.goals ?? 0,
+          assists: r.assists ?? 0,
+          attendance: r.attendance,
+        })),
+        size,
+        formation
+      ),
+    }));
+  }, [game, formation]);
+
+  // What the pitch draws: the real teams once they exist, the preview until then.
+  const pitchTeams = teams.length === 2 ? teams : provisionalTeams;
   const locked = !!game?.lockedTeams;
   const canEdit = isAdmin && game && game.status !== 'cancelled';
 
@@ -411,8 +463,14 @@ export default function Matchday() {
         // admin is looking at instead of always coming out dark.
         background: getComputedStyle(document.body).backgroundColor || '#0A0F0D',
         badge: game.venue?.logo_url ?? null,
-        caption: [game.venue?.name ?? game.districtName, dayAndDate(game.kickoffAt), time(game.kickoffAt)]
-          .filter(Boolean).join('  ·  '),
+        caption: [
+          game.venue?.name ?? game.districtName,
+          dayAndDate(game.kickoffAt),
+          time(game.kickoffAt),
+          // Said on the image itself, because the image is what gets forwarded and
+          // whoever receives it has none of the context the admin had.
+          teams.length === 2 ? null : 'PROVISIONAL',
+        ].filter(Boolean).join('  ·  '),
       });
       const result = await sharePng(blob, {
         filename: exportFilename(game),
@@ -564,7 +622,10 @@ export default function Matchday() {
                 </Button>
                 {/* The picture, not the link. Screenshotting the screen and cropping it
                     by hand was the actual workflow this replaces. */}
-                {hasTeams && (
+                {/* Whenever there is a pitch worth sending, not only once the teams are
+                    final. A provisional lineup is exactly what an admin wants to drop in
+                    the group to show who is in so far. */}
+                {pitchTeams.length > 0 && (
                   <Button variant="secondary" onClick={exportPitch} loading={exporting}>
                     <Image className="size-4" aria-hidden /> Send teams
                   </Button>
@@ -623,9 +684,29 @@ export default function Matchday() {
             </Card>
           )}
 
-          {/* THE PITCH */}
-          {hasTeams ? (
-            <>
+          {/* THE PITCH -- always, even with nobody on it.
+              It used to appear only once the balancer had run, which needs a full roster.
+              So during the entire stretch when an admin is watching people sign up, the
+              main screen showed a message where the pitch should be. */}
+          <>
+              {/* What the preview is, said plainly. Without this an admin sees a laid-out
+                  team and reasonably assumes it is decided. */}
+              {!hasTeams && pitchTeams.length > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--radius-md)] border border-dashed border-[var(--border-default)] px-3 py-2 text-sm">
+                  <span className="font-medium">Provisional lineup</span>
+                  <span className="text-[var(--fg-secondary)]">
+                    {isFull
+                      ? 'Generate teams to balance them properly.'
+                      : `${game.capacity - game.confirmedCount} more to go. Positions fill as people join.`}
+                  </span>
+                  {canEdit && isFull && (
+                    <Button size="sm" className="ml-auto" loading={generating} onClick={generateTeams}>
+                      <Sparkles className="size-4" aria-hidden /> Generate teams
+                    </Button>
+                  )}
+                </div>
+              )}
+
               <div className="mb-3 flex flex-wrap items-center gap-3">
                 {canEdit && (
                   <FormationPicker
@@ -667,7 +748,7 @@ export default function Matchday() {
                   ref, and adding one would put an export concern inside a drawing. */}
               <div ref={pitchRef}>
               <MatchPitch
-                teams={teams}
+                teams={pitchTeams}
                 formation={formation}
                 teamSize={game.teamSize}
                 selectedPlayerId={selectedPlayerId}
@@ -678,33 +759,22 @@ export default function Matchday() {
               />
               </div>
 
-              {canEdit && !locked && (
+              {canEdit && !locked && pitchTeams.length > 0 && (
                 <p className="mt-2 text-center text-xs text-[var(--fg-muted)]">
                   Drag a player onto a position to move them. Tap for payments and stats.
                   {history.length > 0 && ' Ctrl+Z undoes the last change.'}
                 </p>
               )}
-            </>
-          ) : (
-            <Card>
-              <EmptyState
-                icon={Sparkles}
-                title={isFull ? 'Ready to build teams' : `${game.capacity - game.confirmedCount} more needed`}
-                description={
-                  isFull
-                    ? 'Every possible split is evaluated and the teams are picked from the best few, so they differ week to week.'
-                    : 'Teams can be built once the game is full.'
-                }
-                action={
-                  canEdit && isFull ? (
-                    <Button size="lg" loading={generating} onClick={generateTeams}>
-                      <Sparkles className="size-4" /> Generate teams
-                    </Button>
-                  ) : null
-                }
-              />
-            </Card>
-          )}
+
+              {/* Nobody at all: the pitch is drawn empty above, so this only has to say
+                  what happens next. */}
+              {pitchTeams.length === 0 && (
+                <p className="mt-3 text-center text-sm text-[var(--fg-secondary)]">
+                  Nobody has signed up yet. Players appear in their preferred positions as
+                  they join.
+                </p>
+              )}
+          </>
 
           {/* Operations below the pitch */}
           <div className="mt-6 grid gap-4 lg:grid-cols-3">
