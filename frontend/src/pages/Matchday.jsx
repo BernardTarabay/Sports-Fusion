@@ -21,6 +21,7 @@ import { useGames, useMatchday, useCountdown, keys } from '../hooks/index.js';
 import { useSession } from '../state/session.jsx';
 import { matchdayService, adminService, gameService } from '../api/services.js';
 import { fitSquadToFormation, defaultFormation } from '../lib/formations.js';
+import { cn } from '../lib/cn.js';
 import { time, dayAndDate, relativeDay, pad } from '../lib/format.js';
 import {
   Button, Card, Badge, Skeleton, ErrorState, EmptyState, Modal, Avatar,
@@ -227,6 +228,22 @@ export default function Matchday() {
       ),
     }));
   }, [game, formation]);
+
+  /**
+   * Match focus: hide the setup chrome once the whistle goes.
+   *
+   * Before kickoff this screen is for arranging a game -- venue, share links, formation,
+   * regenerate. During one it is for the clock, the score and the pitch, and everything
+   * else is pushing those below the fold on a phone held one-handed at the side of a
+   * pitch in the dark.
+   *
+   * `null` means "follow the match". Once the admin toggles it themselves that choice
+   * sticks, because a panel that keeps re-collapsing under you is worse than one that
+   * never collapses at all.
+   */
+  const inPlay = ['first_half', 'halftime', 'second_half'].includes(game?.clock?.state);
+  const [detailsOverride, setDetailsOverride] = useState(null);
+  const showDetails = detailsOverride ?? !inPlay;
 
   // What the pitch draws: the real teams once they exist, the preview until then.
   const pitchTeams = teams.length === 2 ? teams : provisionalTeams;
@@ -577,8 +594,27 @@ export default function Matchday() {
 
         <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
           {/* Identity: which game, when, where. */}
-          <header className="mb-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <header className={showDetails ? 'mb-5' : 'mb-3'}>
+            {/* Collapsed, the header is one line: which game, and a way back to the rest. */}
+            {!showDetails && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="display text-2xl leading-none">{game.districtName}</span>
+                {game.venue && (
+                  <span className="text-sm text-[var(--fg-secondary)]">{game.venue.name}</span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setDetailsOverride(true)}
+                  aria-expanded={false}
+                >
+                  Details
+                </Button>
+              </div>
+            )}
+
+            <div className={cn('flex flex-wrap items-start justify-between gap-3', !showDetails && 'hidden')}>
               <div className="min-w-0">
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <GameStatusChip
@@ -646,7 +682,21 @@ export default function Matchday() {
               </div>
             </div>
 
-            <GameStatusRail status={game.status} className="mt-4" />
+            {showDetails && <GameStatusRail status={game.status} className="mt-4" />}
+
+            {/* Only offered while a match is on. Outside one there is nothing to focus on
+                and hiding the controls would just be a way to lose them. */}
+            {showDetails && inPlay && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2"
+                onClick={() => setDetailsOverride(false)}
+                aria-expanded
+              >
+                Hide details
+              </Button>
+            )}
           </header>
 
           {/* The clock, above everything. Once the whistle goes this is the only thing on
@@ -707,7 +757,9 @@ export default function Matchday() {
                 </div>
               )}
 
-              <div className="mb-3 flex flex-wrap items-center gap-3">
+              {/* Teams are locked once a match is in progress anyway, so these controls
+                  are not merely noise during play -- most of them cannot be used. */}
+              <div className={cn('mb-3 flex flex-wrap items-center gap-3', !showDetails && 'hidden')}>
                 {canEdit && (
                   <FormationPicker
                     teamSize={game.teamSize}
