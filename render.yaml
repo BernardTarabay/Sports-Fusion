@@ -1,0 +1,90 @@
+# Render blueprint: the API and the worker.
+#
+# The frontend is NOT here -- it is a static Vite build served by Vercel, which rewrites
+# /api/* to whatever host this deploys to. That rewrite is a server-side proxy, so the
+# browser only ever sees one origin and the sameSite=strict session cookies keep working.
+# Splitting them any other way breaks authentication.
+#
+# Both services run from the repo root, because backend/ and worker/ are npm workspaces
+# and share one lockfile. `npm ci -w <name>` still installs the workspace's dependencies
+# from that root lockfile.
+
+services:
+  # ---------------------------------------------------------------------------
+  # The API
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: sports-fusion-api
+    runtime: node
+    plan: free
+    region: frankfurt          # closest Render region to Lebanon
+    branch: main
+
+    buildCommand: npm ci
+    startCommand: npm start --workspace=backend
+
+    # The app answers /health with the database state, not just a 200. Render will
+    # restart the service if this fails, which is the behaviour you want: an API that
+    # cannot reach Postgres is not serving anyone.
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production      # turns on secure cookies, sameSite=strict, trust proxy
+
+      # Render injects PORT. config/index.js reads it, so nothing to set.
+
+      # `sync: false` means "prompt me for this, do not store it in git".
+      - key: DATABASE_URL
+        sync: false            # the POOLED connection string from Vercel Postgres/Neon
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: PUBLIC_WEB_URL
+        sync: false            # the Vercel domain -- embedded in invite and share links
+
+      # A free instance is small and Postgres connection limits are lower than you think.
+      # Each Render instance opens its own pool; keep it modest and use the pooled
+      # connection string.
+      - key: DATABASE_POOL_MAX
+        value: "5"
+
+      # Login codes go to the server log until these are set, which means nobody can
+      # sign in by phone. The seeded admin password still works.
+      - key: WHATSAPP_ENABLED
+        value: "false"
+
+  # ---------------------------------------------------------------------------
+  # The worker
+  # ---------------------------------------------------------------------------
+  #
+  # Reminders, waitlist promotions, points awards and notification delivery. The app
+  # works without it; those specific things simply never happen.
+  #
+  # NOTE: Render background workers are not on the free tier. Leave this commented out
+  # until you are ready to pay for an instance, or drive `npm run tick` from an external
+  # scheduler instead -- the worker is written to support a single pass and exit exactly
+  # so it can run that way.
+  #
+  # - type: worker
+  #   name: sports-fusion-worker
+  #   runtime: node
+  #   plan: starter
+  #   region: frankfurt
+  #   branch: main
+  #   buildCommand: npm ci
+  #   startCommand: npm start --workspace=worker
+  #   envVars:
+  #     - key: NODE_ENV
+  #       value: production
+  #     - key: DATABASE_URL
+  #       sync: false
+  #     - key: JWT_ACCESS_SECRET
+  #       sync: false
+  #     - key: JWT_REFRESH_SECRET
+  #       sync: false
+  #     - key: PUBLIC_WEB_URL
+  #       sync: false
+  #     - key: WHATSAPP_ENABLED
+  #       value: "false"
