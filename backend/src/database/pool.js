@@ -23,6 +23,25 @@ pool.on('error', (err) => {
   logger.error({ err }, 'idle postgres client error');
 });
 
+// Say so, loudly, once, at boot.
+//
+// A pool that cannot reach the database fails lazily: nothing happens until the first
+// query, and if that query is inside a health check the whole thing hangs and reports
+// nothing. One eager connection at startup turns a silent hang into a line in the log
+// that names the host and the reason.
+pool.connect()
+  .then((client) => {
+    const { host, port, database, user } = client.connectionParameters ?? {};
+    logger.info({ host, port, database, user }, 'postgres connected');
+    client.release();
+  })
+  .catch((err) => {
+    logger.error(
+      { err, url: config.database.url?.replace(/:[^:@/]*@/, ':***@') },
+      'POSTGRES UNREACHABLE at startup -- the API is up but every request will fail'
+    );
+  });
+
 export function query(text, params) {
   return pool.query(text, params);
 }

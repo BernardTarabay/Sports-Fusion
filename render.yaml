@@ -23,10 +23,11 @@ services:
     buildCommand: npm ci
     startCommand: npm start --workspace=backend
 
-    # The app answers /health with the database state, not just a 200. Render will
-    # restart the service if this fails, which is the behaviour you want: an API that
-    # cannot reach Postgres is not serving anyone.
-    healthCheckPath: /health
+    # Liveness, not readiness. Gating the deploy on /health -- which queries Postgres --
+    # meant a database that would not answer showed up as a deploy stuck "in progress"
+    # with no error anywhere, because the request never completed and so never logged.
+    # /healthz proves the process is up; /health still reports the database, for you.
+    healthCheckPath: /healthz
 
     envVars:
       - key: NODE_ENV
@@ -44,11 +45,11 @@ services:
       - key: PUBLIC_WEB_URL
         sync: false            # the Vercel domain -- embedded in invite and share links
 
-      # A free instance is small and Postgres connection limits are lower than you think.
-      # Each Render instance opens its own pool; keep it modest and use the pooled
-      # connection string.
+      # Deliberately tiny. Each instance opens its own pool, and a free Postgres will
+      # refuse connections long before it tells you that is what happened -- which
+      # surfaces as a health check that fails for no visible reason.
       - key: DATABASE_POOL_MAX
-        value: "5"
+        value: "2"
 
       # Login codes go to the server log until these are set, which means nobody can
       # sign in by phone. The seeded admin password still works.

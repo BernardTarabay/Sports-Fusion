@@ -77,16 +77,49 @@ export function createApp() {
     skip: () => config.isTest,
   }));
 
+  // LIVENESS. Is this process running and able to answer?
+  //
+  // Deliberately touches nothing. This is what a platform should gate a deploy on: a
+  // health check that also asks the database means a momentary database problem kills a
+  // perfectly healthy service, and -- worse -- a deploy that hangs waiting for one
+  // produces no error at all, just silence and a timeout.
+  app.get(['/healthz', '/'], (_req, res) => {
+    res.json({ status: 'ok', uptime: Math.round(process.uptime()) });
+  });
+
+  // READINESS. Can it actually serve requests?
+  //
+  // This one does ask the database, because that is the useful question once the service
+  // is up. Bounded, so a database that accepts a connection and then never answers
+  // produces a 503 with a reason rather than a request that hangs until the proxy in
+  // front gives up -- which is indistinguishable from the process being dead.
   app.get('/health', async (_req, res) => {
+    const started = Date.now();
     try {
-      const dbOk = await healthcheck();
+      const dbOk = await Promise.race([
+        healthcheck(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('database did not answer within 8s')), 8_000)
+        ),
+      ]);
       res.status(dbOk ? 200 : 503).json({
         status: dbOk ? 'ok' : 'degraded',
         database: dbOk ? 'up' : 'down',
+        latencyMs: Date.now() - started,
         uptime: Math.round(process.uptime()),
       });
-    } catch {
-      res.status(503).json({ status: 'degraded', database: 'down' });
+    } catch (err) {
+      // The reason, not just the verdict. "database down" with no detail is how an
+      // afternoon disappears; the message distinguishes a wrong password from a
+      // firewall from a TLS failure.
+      logger.error({ err, latencyMs: Date.now() - started }, 'health check: database unreachable');
+      res.status(503).json({
+        status: 'degraded',
+        database: 'down',
+        reason: err.message,
+        latencyMs: Date.now() - started,
+        uptime: Math.round(process.uptime()),
+      });
     }
   });
 
