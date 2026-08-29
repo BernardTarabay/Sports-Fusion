@@ -21,6 +21,23 @@ const flag = (fallback = false) =>
     .default(fallback ? 'true' : 'false')
     .transform((v) => v === 'true' || v === '1' || v === 'yes');
 
+/**
+ * Enough of a connection string to debug it, without any of the secret.
+ *
+ * Hosting platforms redact environment variables in their logs, which is right up until
+ * the value is malformed and nobody -- including you -- can see how. Everything between
+ * `//` and `@` is credentials and never appears; the scheme, host and port are what is
+ * actually wrong, and they are not sensitive.
+ */
+function describeConnectionString(value) {
+  const raw = String(value ?? '');
+  const shape = raw.match(/^([a-zA-Z][\w+.-]*):\/\/(?:[^@]*@)?([^/?#]*)/);
+  if (!shape) {
+    return `${raw.length} characters that do not start with a scheme like "postgres://"`;
+  }
+  return `scheme "${shape[1]}", host and port "${shape[2]}", ${raw.length} characters total`;
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -30,11 +47,22 @@ const schema = z.object({
   // down inside the driver with the value redacted. `pg` only rejects a connection
   // string outright when the PORT will not parse -- everything else it accepts and then
   // fails to connect much later -- so that is what this is really catching.
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').refine(
-    (v) => { try { new URL(v); return true; } catch { return false; } },
-    'DATABASE_URL is not a valid URL. The usual cause is a partial paste: check the '
-    + 'port is a number, as in @host:5432/postgres, and that the whole string is there.'
-  ),
+  // Parsed here so a malformed one fails at startup with a sentence, not fifty lines
+  // down inside the driver with the value redacted. `pg` only rejects a connection
+  // string outright when the PORT will not parse -- everything else it accepts and then
+  // fails to connect much later -- so that is what this is really catching.
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').superRefine((v, ctx) => {
+    try {
+      new URL(v);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'DATABASE_URL is not a valid URL. It looks like this: '
+          + `${describeConnectionString(v)}. The usual cause is a partial paste -- the `
+          + 'port has to be a number, as in @host:5432/postgres.',
+      });
+    }
+  }),
   // PGlite (the Docker-free dev database) serves one connection at a time; anything
   // above 1 there queues until it times out. Real Postgres wants the default.
   DATABASE_POOL_MAX: z.coerce.number().int().positive().optional(),
