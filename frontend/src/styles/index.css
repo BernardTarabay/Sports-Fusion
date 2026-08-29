@@ -1,0 +1,531 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   SPORTS FUSION DESIGN SYSTEM
+   --------------------------------------------------------------------------
+   One system, two moods.
+
+   LIGHT is daytime admin: clean, high-contrast, quiet. It gets out of the way.
+
+   DARK is match night. Not "everything is black" -- the base carries a green-black
+   cast borrowed from a floodlit pitch at 9pm, surfaces lift with light rather than
+   with grey, and the accent behaves like a floodlight rather than a neon sign.
+
+   Colour rules:
+     - Green is the pitch. It marks availability, confirmation, and identity.
+     - Amber is the trophy. MOTM, achievements, records. Used sparingly so it stays
+       meaningful -- if everything is gold, nothing is.
+     - Red is urgency, never decoration. Almost full, cancelled, destructive.
+     - Everything else is ink.
+   ========================================================================== */
+
+@theme {
+  /* --- Typography ------------------------------------------------------- */
+  /* Barlow Condensed is the broadcast voice: scorelines, team names, stat numbers.
+     Inter carries everything a person actually reads. */
+  --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+
+  /* --- Brand ------------------------------------------------------------ */
+  --color-pitch-50: #e8fbf1;
+  --color-pitch-100: #c6f5dd;
+  --color-pitch-200: #8eeabc;
+  --color-pitch-300: #52d998;
+  --color-pitch-400: #22c479;
+  --color-pitch-500: #00c06a;
+  --color-pitch-600: #009e57;
+  --color-pitch-700: #037c46;
+  --color-pitch-800: #07603a;
+  --color-pitch-900: #084f31;
+  --color-pitch-950: #012c1c;
+
+  --color-trophy-300: #ffdf8a;
+  --color-trophy-400: #f7cd63;
+  --color-trophy-500: #f5c451;
+  --color-trophy-600: #d9a52f;
+  --color-trophy-700: #a97c1c;
+
+  --color-signal-300: #ffa79b;
+  --color-signal-400: #fb7c6b;
+  --color-signal-500: #f4523f;
+  --color-signal-600: #d93a28;
+  --color-signal-700: #ab2b1d;
+
+  --color-cool-400: #63a4ff;
+  --color-cool-500: #3d8bff;
+  --color-cool-600: #2b6fd6;
+
+  /* Ink carries a faint green cast so neutrals sit with the pitch instead of
+     fighting it. Pure grey next to this green reads as dirty. */
+  --color-ink-0: #ffffff;
+  --color-ink-25: #f7faf8;
+  --color-ink-50: #eef3f0;
+  --color-ink-100: #dfe7e3;
+  --color-ink-200: #c4d0cb;
+  --color-ink-300: #9aaaa4;
+  --color-ink-400: #6f827b;
+  --color-ink-500: #4e615a;
+  --color-ink-600: #38473f;
+  --color-ink-700: #24302b;
+  --color-ink-800: #161f1b;
+  --color-ink-900: #0f1714;
+  --color-ink-950: #0a0f0d;
+
+  /* --- Radius ----------------------------------------------------------- */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.125rem;
+  --radius-2xl: 1.5rem;
+
+  /* --- Motion ----------------------------------------------------------- */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ==========================================================================
+   Semantic tokens.
+
+   Components reference these, never the raw scale, so a theme change is one file.
+   Light is the base; dark is a redefinition of the same names.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --bg-canvas: var(--color-ink-25);
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-sunken: var(--color-ink-50);
+  --bg-inverse: var(--color-ink-950);
+
+  --fg-primary: var(--color-ink-950);
+  --fg-secondary: var(--color-ink-500);
+  --fg-muted: var(--color-ink-400);
+  --fg-inverse: #ffffff;
+  --fg-accent: var(--color-pitch-700);
+
+  --border-subtle: var(--color-ink-100);
+  --border-default: var(--color-ink-200);
+  --border-strong: var(--color-ink-300);
+  --border-accent: var(--color-pitch-500);
+
+  --accent: var(--color-pitch-600);
+  --accent-hover: var(--color-pitch-700);
+  --accent-fg: #ffffff;
+  --accent-soft: var(--color-pitch-50);
+  --accent-soft-fg: var(--color-pitch-800);
+
+  --trophy: var(--color-trophy-600);
+  --trophy-soft: #fdf4dd;
+  --trophy-soft-fg: var(--color-trophy-700);
+
+  --danger: var(--color-signal-600);
+  --danger-soft: #fdece9;
+  --danger-soft-fg: var(--color-signal-700);
+
+  --info: var(--color-cool-600);
+  --info-soft: #e9f1ff;
+  --info-soft-fg: var(--color-cool-600);
+
+  --shadow-sm: 0 1px 2px rgb(10 15 13 / 0.05);
+  --shadow-md: 0 2px 4px -1px rgb(10 15 13 / 0.06), 0 4px 12px -2px rgb(10 15 13 / 0.08);
+  --shadow-lg: 0 8px 24px -6px rgb(10 15 13 / 0.12), 0 2px 6px -2px rgb(10 15 13 / 0.06);
+  --shadow-glow: none;
+
+  /* Pitch rendering */
+  --pitch-turf-a: #1f9c5d;
+  --pitch-turf-b: #1b8d54;
+  --pitch-line: rgb(255 255 255 / 0.55);
+  --pitch-edge: rgb(255 255 255 / 0.7);
+
+  --floodlight: transparent;
+}
+
+:root[data-theme='dark'],
+:root:not([data-theme='light']) {
+  /* System default follows the OS; an explicit choice wins in both directions. */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg-canvas: var(--color-ink-950);
+    --bg-surface: #101815;
+    --bg-raised: #16211d;
+    --bg-sunken: #070b09;
+    --bg-inverse: #ffffff;
+
+    --fg-primary: #eef3f0;
+    --fg-secondary: #9aaaa4;
+    --fg-muted: #6f827b;
+    --fg-inverse: var(--color-ink-950);
+    --fg-accent: var(--color-pitch-300);
+
+    --border-subtle: #1c2825;
+    --border-default: #26332e;
+    --border-strong: #38473f;
+    --border-accent: var(--color-pitch-500);
+
+    --accent: var(--color-pitch-500);
+    --accent-hover: var(--color-pitch-400);
+    --accent-fg: #04160d;
+    --accent-soft: rgb(0 192 106 / 0.12);
+    --accent-soft-fg: var(--color-pitch-300);
+
+    --trophy: var(--color-trophy-400);
+    --trophy-soft: rgb(245 196 81 / 0.12);
+    --trophy-soft-fg: var(--color-trophy-300);
+
+    --danger: var(--color-signal-400);
+    --danger-soft: rgb(244 82 63 / 0.14);
+    --danger-soft-fg: var(--color-signal-300);
+
+    --info: var(--color-cool-400);
+    --info-soft: rgb(61 139 255 / 0.14);
+    --info-soft-fg: var(--color-cool-400);
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
+    --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+    /* Elevation in the dark comes from light, not from a darker drop shadow. */
+    --shadow-glow: 0 0 0 1px rgb(0 192 106 / 0.14), 0 0 28px -6px rgb(0 192 106 / 0.22);
+
+    --pitch-turf-a: #0d3d28;
+    --pitch-turf-b: #0a3322;
+    --pitch-line: rgb(214 255 233 / 0.28);
+    --pitch-edge: rgb(214 255 233 / 0.42);
+
+    --floodlight: radial-gradient(
+      ellipse 80% 55% at 50% -10%,
+      rgb(0 192 106 / 0.16) 0%,
+      rgb(0 192 106 / 0.05) 40%,
+      transparent 72%
+    );
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-canvas: var(--color-ink-950);
+  --bg-surface: #101815;
+  --bg-raised: #16211d;
+  --bg-sunken: #070b09;
+  --bg-inverse: #ffffff;
+
+  --fg-primary: #eef3f0;
+  --fg-secondary: #9aaaa4;
+  --fg-muted: #6f827b;
+  --fg-inverse: var(--color-ink-950);
+  --fg-accent: var(--color-pitch-300);
+
+  --border-subtle: #1c2825;
+  --border-default: #26332e;
+  --border-strong: #38473f;
+  --border-accent: var(--color-pitch-500);
+
+  --accent: var(--color-pitch-500);
+  --accent-hover: var(--color-pitch-400);
+  --accent-fg: #04160d;
+  --accent-soft: rgb(0 192 106 / 0.12);
+  --accent-soft-fg: var(--color-pitch-300);
+
+  --trophy: var(--color-trophy-400);
+  --trophy-soft: rgb(245 196 81 / 0.12);
+  --trophy-soft-fg: var(--color-trophy-300);
+
+  --danger: var(--color-signal-400);
+  --danger-soft: rgb(244 82 63 / 0.14);
+  --danger-soft-fg: var(--color-signal-300);
+
+  --info: var(--color-cool-400);
+  --info-soft: rgb(61 139 255 / 0.14);
+  --info-soft-fg: var(--color-cool-400);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+  --shadow-glow: 0 0 0 1px rgb(0 192 106 / 0.14), 0 0 28px -6px rgb(0 192 106 / 0.22);
+
+  --pitch-turf-a: #0d3d28;
+  --pitch-turf-b: #0a3322;
+  --pitch-line: rgb(214 255 233 / 0.28);
+  --pitch-edge: rgb(214 255 233 / 0.42);
+
+  --floodlight: radial-gradient(
+    ellipse 80% 55% at 50% -10%,
+    rgb(0 192 106 / 0.16) 0%,
+    rgb(0 192 106 / 0.05) 40%,
+    transparent 72%
+  );
+}
+
+/* Expose semantic tokens to Tailwind utilities (bg-surface, text-secondary, ...). */
+@theme inline {
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-surface);
+  --color-raised: var(--bg-raised);
+  --color-sunken: var(--bg-sunken);
+
+  --color-primary: var(--fg-primary);
+  --color-secondary: var(--fg-secondary);
+  --color-muted: var(--fg-muted);
+  --color-inverse: var(--fg-inverse);
+
+  --color-line: var(--border-default);
+  --color-line-subtle: var(--border-subtle);
+  --color-line-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-trophy: var(--trophy);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+* {
+  border-color: var(--border-subtle);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg-canvas);
+  color: var(--fg-primary);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* iOS overscroll should not reveal white behind a match-night interface. */
+  overscroll-behavior-y: none;
+}
+
+/* Focus is never removed, only restyled. Keyboard players exist. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Every number that can change in place is tabular, so counters and scorelines do
+   not jitter as they tick. */
+.tnum,
+table,
+time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Reusable component classes
+   ========================================================================== */
+
+@layer components {
+  /* Broadcast type: condensed, uppercase, tight. Used for scores, team names,
+     section eyebrows -- the things a TV graphic would set. */
+  .display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 0.95;
+    text-transform: uppercase;
+  }
+
+  .eyebrow {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+  }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card-interactive {
+    transition: transform 0.18s var(--ease-out-quint),
+      box-shadow 0.18s var(--ease-out-quint), border-color 0.18s var(--ease-out-quint);
+  }
+  .card-interactive:hover {
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+  }
+  .card-interactive:active {
+    transform: translateY(0);
+  }
+
+  /* The floodlight wash behind hero sections in dark mode. Invisible in light. */
+  .floodlit {
+    position: relative;
+    isolation: isolate;
+  }
+  .floodlit::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--floodlight);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* Mown-grass stripes. Very low contrast -- suggestion, not decoration. */
+  .turf-stripes {
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--pitch-turf-a) 0 8.3333%,
+      var(--pitch-turf-b) 8.3333% 16.6666%
+    );
+  }
+
+  .divider-dot::after {
+    content: '·';
+    margin: 0 0.5ch;
+    color: var(--fg-muted);
+  }
+
+  /* Skeletons shimmer rather than pulse: less distracting when eight of them are
+     on screen at once. */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--bg-sunken) 25%,
+      color-mix(in oklab, var(--bg-sunken), var(--fg-muted) 12%) 37%,
+      var(--bg-sunken) 63%
+    );
+    background-size: 400% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: var(--radius-sm);
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Horizontal swipe rails for stats on mobile. */
+  .snap-rail {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 1rem;
+  }
+  .snap-rail > * {
+    scroll-snap-align: start;
+    flex: 0 0 auto;
+  }
+
+  /* Safe-area padding for the bottom nav on notched phones. */
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+  .h-safe-bottom {
+    height: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* ==========================================================================
+   Reduced motion.
+
+   Honoured globally rather than component by component. Someone who has asked
+   their OS to stop moving things has asked once, not per feature.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton {
+    animation: none;
+    background: var(--bg-sunken);
+  }
+}
+
+/* Print: a team sheet printed for the touchline should be readable in black ink. */
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; color: #000; }
+}
+
+/* ---------------------------------------------------------------------------
+   Native select
+   ---------------------------------------------------------------------------
+   In CSS rather than in utility classes, because the chevron is a data URI and a data
+   URI contains literal spaces. A class attribute is split on whitespace, so
+   `bg-[url("data:image/svg+xml,%3Csvg xmlns=...")]` was torn into fragments -- taking the
+   background-color class with it. The select ended up transparent with no arrow, and its
+   options inherited near-white text onto nothing.
+   --------------------------------------------------------------------------- */
+
+.select-field {
+  width: 100%;
+  height: 2.75rem;
+  padding: 0 2.25rem 0 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  appearance: none;
+  background-color: var(--bg-surface);
+  color: var(--fg-primary);
+  border: 1px solid var(--border-default);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%236f827b'%20stroke-width='2'%3E%3Cpath%20d='m6%209%206%206%206-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 1.1rem;
+}
+
+.select-field:focus {
+  border-color: var(--accent);
+}
+
+.select-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The dropdown itself is drawn by the operating system, and it does not inherit the
+   select's background -- only its colour. Left alone, a dark theme paints near-white
+   text onto the popup's own light surface, which is the "I can see there are options but
+   not read them" failure. Stated explicitly so both halves come from the same palette. */
+.select-field option,
+.select-field optgroup {
+  background-color: var(--bg-surface);
+  color: var(--fg-primary);
+}

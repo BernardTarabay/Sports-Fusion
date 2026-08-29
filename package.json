@@ -1,0 +1,41 @@
+{
+  "name": "sports-fusion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sports Fusion - football operations platform",
+  "workspaces": [
+    "backend",
+    "worker"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d",
+    "migrate": "node scripts/migrate.js",
+    "migrate:status": "node scripts/migrate.js --status",
+    "verify:schema": "node scripts/verify-schema.js",
+    "announcements": "node scripts/preview-announcements.js",
+    "seed": "node scripts/seed.js",
+    "dev": "npm run dev --workspace=backend",
+    "test": "node --test backend/src/modules/teams/balancer.test.js backend/src/modules/ratings/glicko2.test.js backend/src/api.test.js backend/src/worker.test.js backend/src/results.test.js backend/src/ratings.test.js backend/src/rewards.test.js backend/src/authorization.test.js && node scripts/verify-schema.js",
+    "test:unit": "node --test backend/src/modules/teams/balancer.test.js",
+    "test:api": "node --test backend/src/api.test.js",
+    "test:concurrency": "node --test backend/src/modules/registrations/concurrency.test.js",
+    "test:worker": "node --test backend/src/worker.test.js",
+    "worker": "npm run start --workspace=worker",
+    "worker:tick": "npm run tick --workspace=worker",
+    "test:results": "node --test backend/src/results.test.js",
+    "test:ratings": "node --test backend/src/modules/ratings/glicko2.test.js backend/src/ratings.test.js",
+    "test:rewards": "node --test backend/src/rewards.test.js",
+    "db:dev": "node scripts/dev-db.js",
+    "db:dev:reset": "node scripts/dev-db.js --reset",
+    "setup": "npm run migrate && npm run seed",
+    "test:authz": "node --test backend/src/authorization.test.js"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
+    "pino-pretty": "^13.1.3"
+  }
+}

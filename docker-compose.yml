@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sf-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sportsfusion}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sportsfusion_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-sportsfusion}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - sf_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sportsfusion} -d ${POSTGRES_DB:-sportsfusion}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: sf-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - sf_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  sf_pgdata:
+  sf_redisdata:

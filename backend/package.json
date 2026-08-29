@@ -1,0 +1,46 @@
+{
+  "name": "@sports-fusion/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sports Fusion backend - modular monolith",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "migrate": "node ../scripts/migrate.js",
+    "migrate:status": "node ../scripts/migrate.js --status",
+    "seed": "node ../scripts/seed.js",
+    "reconcile": "node ../scripts/reconcile.js",
+    "test": "node --test 'src/**/*.test.js'"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "pino-http": "^10.4.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.24.1"
+  },
+  "exports": {
+    "./config": "./src/config/index.js",
+    "./database/pool": "./src/database/pool.js",
+    "./lib/logger": "./src/lib/logger.js",
+    "./lib/events": "./src/lib/events.js",
+    "./lib/errors": "./src/lib/errors.js",
+    "./modules/teams/service": "./src/modules/teams/service.js",
+    "./integrations/whatsapp/announcements": "./src/integrations/whatsapp/announcements.js",
+    "./modules/ratings/service": "./src/modules/ratings/service.js",
+    "./modules/ratings/glicko2": "./src/modules/ratings/glicko2.js",
+    "./modules/rewards/service": "./src/modules/rewards/service.js"
+  }
+}
