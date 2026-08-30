@@ -12,6 +12,7 @@ import { MapPin, Users, Clock } from 'lucide-react';
 import { cn } from '../../lib/cn.js';
 import { shortDay, dayNumber, monthName, time, relativeDay, placeOf } from '../../lib/format.js';
 import { CapacityMeter, GameStatusChip, ScoreLine } from '../football/index.jsx';
+import { VenueBadge } from '../football/VenueBadge.jsx';
 import { Badge, Button, Card } from '../ui/index.jsx';
 import { joinability } from '../../lib/joinability.js';
 
@@ -53,7 +54,7 @@ export function GameCard({ game, className, compact = false, showAction = true }
       )}
 
       <div className="relative z-[1] p-4 pointer-events-none">
-        <div className="flex gap-4">
+        <div className="flex gap-3 sm:gap-4">
           {/* Date block */}
           <div className="shrink-0 text-center w-12">
             <p className="eyebrow text-[0.6875rem] leading-tight">{shortDay(kickoff)}</p>
@@ -63,28 +64,35 @@ export function GameCard({ game, className, compact = false, showAction = true }
 
           <div className="w-px bg-[var(--border-subtle)] shrink-0" />
 
+          {/* The venue's own badge. Admins upload these and they only ever appeared on
+              the game page -- the card is where a fixture is actually recognised, and a
+              logo is quicker to recognise than a line of text in a scroll. */}
+          <VenueBadge venue={game.venue} size={36} className="mt-0.5 sm:size-10" />
+
           <div className="min-w-0 flex-1">
+            {/* The GROUND is the heading. It used to be the district, with the pitch
+                in small grey text underneath -- which is backwards for the person
+                deciding whether to come: nobody drives to a caza. The district stays as
+                the locating line, because "Zouk Mosbeh, Keserwan" is how you place a
+                ground you have not been to. */}
             <div className="flex items-start justify-between gap-2">
-              {/* The GROUND is the heading. It used to be the district, with the pitch
-                  in small grey text underneath -- which is backwards for the person
-                  deciding whether to come: nobody drives to a caza. The district stays
-                  as the locating line, because "Zouk Mosbeh, Keserwan" is how you place
-                  a ground you have not been to. */}
-              <div className="min-w-0">
-                <p className="display text-xl sm:text-2xl leading-tight truncate">
-                  {game.venue?.name ?? game.districtName}
-                </p>
-                <p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--fg-secondary)] truncate">
-                  <MapPin className="size-3 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{placeOf(game)}</span>
-                </p>
-              </div>
+              <p className="display min-w-0 text-xl leading-tight line-clamp-2 sm:text-2xl">
+                {game.venue?.name ?? game.districtName}
+              </p>
               <GameStatusChip
                 status={game.status}
                 confirmed={game.confirmedCount}
                 capacity={game.capacity}
               />
             </div>
+
+            {/* Its own row, not tucked beside the status chip. Sharing that row left it
+                132px wide on a phone, so "Zouk Mosbeh, Keserwan" clipped to
+                "Zouk Mosbeh, Kes..." -- losing exactly the half that places it. */}
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--fg-secondary)]">
+              <MapPin className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{placeOf(game)}</span>
+            </p>
 
             <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span className="flex items-center gap-1.5 font-semibold tnum">

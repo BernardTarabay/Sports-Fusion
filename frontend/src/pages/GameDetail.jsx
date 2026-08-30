@@ -249,7 +249,7 @@ export default function GameDetail() {
         <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-8">
           <Link
             to="/games"
-            className="mb-4 inline-flex items-center gap-1 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+            className="mb-2 -ml-2 inline-flex min-h-11 items-center gap-1 px-2 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
           >
             <ChevronLeft className="size-4" /> All games
           </Link>

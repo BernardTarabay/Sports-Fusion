@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Link, useLocation, Outlet } from 'react-router';
 import {
   Home, CalendarDays, Trophy, Gift, User, MapPin, Sun, Moon, Monitor, LogOut,
-  Shield, Goal, X,
+  Goal, X,
 } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { useSession } from '../state/session.jsx';
@@ -65,7 +65,7 @@ function ThemeToggle({ className }) {
 }
 
 function DesktopNav() {
-  const { isAuthenticated, isAdmin, user, logout } = useSession();
+  const { isAuthenticated, user, logout } = useSession();
 
   return (
     <header className="sticky top-0 z-40 hidden border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/85 backdrop-blur-lg lg:block">
@@ -101,16 +101,6 @@ function DesktopNav() {
 
         {isAuthenticated ? (
           <div className="flex items-center gap-2">
-            {/* An admin who also plays. Quiet, because switching applications is not
-                something a player does, and this shell belongs to the player. */}
-            {isAdmin && (
-              <Link
-                to="/admin"
-                className="flex h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-sm text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] hover:text-[var(--fg-primary)]"
-              >
-                <Shield className="size-4" /> Operations
-              </Link>
-            )}
             <Link to="/profile" className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 hover:bg-[var(--bg-sunken)]">
               <Avatar name={user?.displayName} size="sm" />
               <span className="max-w-32 truncate text-sm font-medium">{user?.displayName}</span>
@@ -132,7 +122,7 @@ function DesktopNav() {
 
 function MobileHeader() {
   const [open, setOpen] = useState(false);
-  const { isAuthenticated, isAdmin, user, logout } = useSession();
+  const { isAuthenticated, user, logout } = useSession();
   const location = useLocation();
   const sheetRef = useRef(null);
   const openerRef = useRef(null);
@@ -242,9 +232,6 @@ function MobileHeader() {
               <SheetLink to="/profile" icon={User} label="My profile" onNavigate={() => setOpen(false)} />
               <SheetLink to="/rewards" icon={Gift} label="Rewards" onNavigate={() => setOpen(false)} />
               <SheetLink to="/districts" icon={MapPin} label="Districts" onNavigate={() => setOpen(false)} />
-              {isAdmin && (
-                <SheetLink to="/admin" icon={Shield} label="Operations" onNavigate={() => setOpen(false)} />
-              )}
             </nav>
 
             {/* The footer is desktop-only, so without this a phone never sees the store

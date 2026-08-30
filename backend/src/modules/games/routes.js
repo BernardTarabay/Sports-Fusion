@@ -3,6 +3,7 @@ import { z } from 'zod';
 import * as gameService from './service.js';
 import * as registrationService from '../registrations/service.js';
 import * as teamService from '../teams/service.js';
+import * as matchdayService from '../matchday/service.js';
 import { validate, asyncHandler } from '../../middleware/validate.js';
 import { authenticate, optionalAuth } from '../../middleware/authenticate.js';
 import {
@@ -310,9 +311,17 @@ router.post(
   }),
   requireDistrictAccess(gameDistrict),
   asyncHandler(async (req, res) => {
-    res.json(await teamService.applyOverride({
+    const result = await teamService.applyOverride({
       gameId: req.params.id, moves: req.body.moves, actorUserId: req.user.id,
-    }));
+    });
+    // The whole game comes back, not just the teams.
+    //
+    // Every caller of this endpoint is a tactical board that has just moved somebody and
+    // needs to redraw -- and the board draws from the matchday projection, not from a
+    // bare team list. Returning only { moved, teams, uneven } meant the client read
+    // `game` off the response, got undefined, and spread it over its cache: the fixture
+    // lost its kickoff time and the screen went blank mid-drag.
+    res.json({ ...result, game: await matchdayService.getMatchday(req.params.id) });
   })
 );
 

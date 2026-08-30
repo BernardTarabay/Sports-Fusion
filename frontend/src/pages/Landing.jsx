@@ -130,16 +130,21 @@ function Hero({ featured }) {
                 </div>
 
                 {/* The same rule the fixture card and the game page use, so the front
-                    door cannot advertise joining a match that has already kicked off. */}
+                    door cannot advertise joining a match that has already kicked off --
+                    or one the viewer is already playing in. */}
                 <Button
-                  to={`/games/${featured.slug ?? featured.id}`}
-                  variant={joinability(featured).canJoin ? 'primary' : 'secondary'}
+                  to={featured.isRegistered ? '/my-game' : `/games/${featured.slug ?? featured.id}`}
+                  variant={!featured.isRegistered && joinability(featured).canJoin ? 'primary' : 'secondary'}
                   className="mt-5 w-full"
                   size="lg"
                 >
-                  {joinability(featured).canJoin
-                    ? joinability(featured).label
-                    : `${joinability(featured).label} · see the game`}
+                  {featured.isRegistered
+                    ? (featured.myWaitlistPosition
+                        ? `You are #${featured.myWaitlistPosition} on the waiting list`
+                        : "You're in · view your game")
+                    : joinability(featured).canJoin
+                      ? joinability(featured).label
+                      : `${joinability(featured).label} · see the game`}
                 </Button>
               </div>
             </Card>

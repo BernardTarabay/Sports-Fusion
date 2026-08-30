@@ -17,10 +17,10 @@ import { inviteService } from '../api/services.js';
 import { useSession } from '../state/session.jsx';
 import { PhoneSignIn, toE164 } from '../components/auth/PhoneSignIn.jsx';
 import {
-  Button, Card, Field, Input, Select, Skeleton, ErrorState,
+  Button, Card, Field, Input, Skeleton, ErrorState,
 } from '../components/ui/index.jsx';
 import { Logo } from '../components/shared/Logo.jsx';
-import { POSITIONS } from '../lib/catalogue.js';
+import { PositionPicker } from '../components/players/PositionPicker.jsx';
 
 function Shell({ children }) {
   return (
@@ -42,7 +42,9 @@ export default function Join() {
 
   const [step, setStep] = useState('intro');
   const [verified, setVerified] = useState(null);   // { phone, code }
-  const [profile, setProfile] = useState({ displayName: '', preferredPosition: '' });
+  const [profile, setProfile] = useState({
+    displayName: '', preferredPosition: '', secondaryPositions: [],
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -100,10 +102,14 @@ export default function Join() {
         code: verified.code,
         displayName: profile.displayName.trim(),
         preferredPosition: profile.preferredPosition || undefined,
-        isGoalkeeper: profile.preferredPosition === 'GK',
+        secondaryPositions: profile.secondaryPositions,
+        // Willing to go in goal, not merely able. Someone who lists GK anywhere in their
+        // three is telling us they will take a turn, and the balancer needs one per side.
+        isGoalkeeper:
+          profile.preferredPosition === 'GK' || profile.secondaryPositions.includes('GK'),
       });
       await adoptSession(result.user);
-      navigate(result.joinedGame ? '/matchday' : '/games', { replace: true });
+      navigate(result.joinedGame ? '/my-game' : '/games', { replace: true });
     } catch (err) {
       setError(err.message ?? 'Could not finish signing you up');
       // The code is spent whatever happened, so there is no way back but a new one.
@@ -206,19 +212,18 @@ export default function Join() {
 
         <Field
           label="Where do you play?"
-          hint="Optional. It only shapes the first few teams — after that your results speak."
-          htmlFor="preferredPosition"
+          hint="Optional, and you can change it later. It only shapes the first few teams — after that your results speak."
         >
-          <Select
-            id="preferredPosition"
-            value={profile.preferredPosition}
-            onChange={(e) => setProfile((p) => ({ ...p, preferredPosition: e.target.value }))}
-          >
-            <option value="">Anywhere</option>
-            {POSITIONS.map((pos) => (
-              <option key={pos.code} value={pos.code}>{pos.label}</option>
-            ))}
-          </Select>
+          <PositionPicker
+            primary={profile.preferredPosition || null}
+            secondary={profile.secondaryPositions}
+            onChange={({ primary, secondary }) =>
+              setProfile((p) => ({
+                ...p,
+                preferredPosition: primary ?? '',
+                secondaryPositions: secondary,
+              }))}
+          />
         </Field>
 
         <Button type="submit" size="lg" className="w-full" loading={busy}>

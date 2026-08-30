@@ -1,0 +1,19 @@
+# Line endings are LF, everywhere, in the repository and in the working tree.
+#
+# Without this, git on Windows checks out CRLF (core.autocrlf defaults to true there),
+# and every file a Windows contributor touches comes back with its whole contents marked
+# as changed. That buries a two-line fix in a thousand-line diff, and it makes any tool
+# that searches for a multi-line pattern -- a codemod, a linter's autofix, sed -- silently
+# miss.
+#
+# The codebase is LF-authored, the servers run Linux, and every editor worth using has
+# handled LF on Windows for a decade.
+* text=auto eol=lf
+
+# Binary, so git never touches the bytes.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.ico  binary
+*.pdf  binary

@@ -115,14 +115,6 @@ export function AdminLayout() {
                 role="menu"
                 className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] py-1 shadow-[var(--shadow-lg)]"
               >
-                <Link
-                  to="/"
-                  role="menuitem"
-                  className="flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-[var(--bg-sunken)]"
-                >
-                  <User className="size-4 text-[var(--fg-secondary)]" aria-hidden="true" />
-                  Player app
-                </Link>
                 <a
                   href={STORE_URL}
                   target="_blank"
@@ -147,7 +139,11 @@ export function AdminLayout() {
         </div>
       </header>
 
-      <main className="pb-24 md:pb-10">
+      {/* pb-36 on mobile, not pb-24. Two fixed things overlap the bottom of this app:
+          the 65px tab rail AND the assistant button floating 80px above it. At pb-24 the
+          last row of a page -- the row an admin scrolls all the way down to reach --
+          finished underneath the "Ask AI" pill. */}
+      <main className="pb-36 md:pb-10">
         <Outlet />
       </main>
 

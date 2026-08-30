@@ -77,7 +77,7 @@ export function Login() {
       const isAdmin = (me?.roles ?? []).some((r) =>
         ['admin', 'owner', 'district_admin'].includes(r.role)
       );
-      navigate(location.state?.from ?? (isAdmin ? '/admin' : '/matchday'), { replace: true });
+      navigate(location.state?.from ?? (isAdmin ? '/admin' : '/my-game'), { replace: true });
     } catch (error) {
       // The message is already human -- the API client maps codes to copy.
       setError('password', { message: error.message });
@@ -91,7 +91,7 @@ export function Login() {
     const isAdmin = (me?.roles ?? []).some((r) =>
       ['admin', 'owner', 'district_admin'].includes(r.role)
     );
-    navigate(location.state?.from ?? (isAdmin ? '/admin' : '/matchday'), { replace: true });
+    navigate(location.state?.from ?? (isAdmin ? '/admin' : '/my-game'), { replace: true });
   };
 
   // A number with no account comes back as NAME_REQUIRED, which PhoneSignIn handles by
@@ -108,7 +108,7 @@ export function Login() {
     <AuthShell
       title="Welcome back"
       subtitle="Sign in to join games and see your stats."
-      footer={<>New here? <Link to="/signup" className="font-medium text-[var(--accent)] hover:underline">Create a profile</Link></>}
+      footer={<>New here? <Link to="/signup" className="inline-flex min-h-11 items-center px-1 font-medium text-[var(--accent)] hover:underline">Create a profile</Link></>}
     >
       <Segmented
         className="mb-5 w-full"
@@ -188,7 +188,7 @@ export function Signup() {
     <AuthShell
       title="Join Sports Fusion"
       subtitle="One profile. Every district. No group chat required."
-      footer={<>Already playing? <Link to="/login" className="font-medium text-[var(--accent)] hover:underline">Sign in</Link></>}
+      footer={<>Already playing? <Link to="/login" className="inline-flex min-h-11 items-center px-1 font-medium text-[var(--accent)] hover:underline">Sign in</Link></>}
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
         <Field label="Your name" htmlFor="displayName" error={errors.displayName?.message}

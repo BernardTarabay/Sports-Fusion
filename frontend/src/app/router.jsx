@@ -19,8 +19,10 @@
 //            job.
 //
 // They share components, a session and an API. They do not share a shell, a navigation,
-// or a screen. An admin who also plays can still reach the player app — the link is in
-// their account menu — because plenty of admins turn out on Saturday too.
+// or a screen, and there are no doors between them: an admin lands in the admin app and
+// stays there. On a phone the mode links were the most confusing thing in the product —
+// one tap moved you to a different navigation with different destinations and no obvious
+// way back.
 
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router';
@@ -67,6 +69,20 @@ function RouteFallback() {
   );
 }
 
+/**
+ * The front door, which is a different door depending on who you are.
+ *
+ * An admin signing in has come to run a match, not to browse fixtures, and with the mode
+ * links gone the player app is a dead end for them. Only the index redirects: a direct
+ * link to a game or a profile still resolves, so a shared link works for everybody and
+ * an admin who does want the player app can still get there.
+ */
+function Home() {
+  const { isAdmin, isLoading } = useSession();
+  if (isLoading) return <RouteFallback />;
+  return isAdmin ? <Navigate to="/admin" replace /> : <Landing />;
+}
+
 function RequireAuth({ children }) {
   const { isAuthenticated, isLoading } = useSession();
   const location = useLocation();
@@ -91,7 +107,7 @@ export function AppRoutes() {
             THE PLAYER APP
             --------------------------------------------------------------- */}
         <Route element={<AppLayout />}>
-          <Route index element={<Landing />} />
+          <Route index element={<Home />} />
 
           {/* One tap from anywhere to the thing a player came for. */}
           <Route path="my-game" element={<RequireAuth><MyGame /></RequireAuth>} />

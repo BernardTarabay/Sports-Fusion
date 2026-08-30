@@ -2,7 +2,7 @@
 // the shareable graphics.
 
 import { Link } from 'react-router';
-import { Trophy, TrendingUp, TrendingDown, Share2 } from 'lucide-react';
+import { Trophy, TrendingUp, TrendingDown, Share2, Pencil } from 'lucide-react';
 import { cn } from '../../lib/cn.js';
 import { toPlayerRating, isProvisional, relativeDay, compact, percent } from '../../lib/format.js';
 import { Avatar, Badge, Button, Card } from '../ui/index.jsx';
@@ -74,7 +74,7 @@ export function PlayerCard({ player, rank, metric, className, showForm = true, h
    stats underneath. Not a form with an avatar.
    ========================================================================== */
 
-export function PlayerHero({ player, ratingHistory = [], onShare, className }) {
+export function PlayerHero({ player, ratingHistory = [], onShare, onEdit, className }) {
   const rating = toPlayerRating(player.ratingMu);
   const provisional = isProvisional(player.ratingSigma);
   const trend = ratingHistory.length >= 2
@@ -102,6 +102,12 @@ export function PlayerHero({ player, ratingHistory = [], onShare, className }) {
             <h1 className="display text-3xl sm:text-4xl leading-none truncate">{player.name}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <PositionChip position={player.position} />
+              {/* The other positions they will fill in at. Shown because it is the one
+                  thing on this page they chose, and because a team-mate scanning a
+                  profile wants to know who can go in goal. */}
+              {(player.secondaryPositions ?? []).map((code) => (
+                <PositionChip key={code} position={code} muted />
+              ))}
               {player.districtName && (
                 <Badge tone="outline">{player.districtName}</Badge>
               )}
@@ -114,11 +120,18 @@ export function PlayerHero({ player, ratingHistory = [], onShare, className }) {
             </div>
           </div>
 
-          {onShare && (
-            <Button variant="ghost" size="icon" onClick={onShare} aria-label="Share player card">
-              <Share2 className="size-4" />
-            </Button>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {onEdit && (
+              <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit your positions">
+                <Pencil className="size-4" />
+              </Button>
+            )}
+            {onShare && (
+              <Button variant="ghost" size="icon" onClick={onShare} aria-label="Share player card">
+                <Share2 className="size-4" />
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* The number. Deliberately the largest thing on the page. */}

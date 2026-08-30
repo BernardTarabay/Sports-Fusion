@@ -770,12 +770,24 @@ export function GameStatusRail({ status, className }) {
 
   const currentIndex = LIFECYCLE.findIndex((s) => s.key === status);
 
+  // Seven stages do not fit across a phone, so the rail scrolls -- and a rail that
+  // scrolls always starts at "Scheduled", which is the one stage nobody needs to see.
+  // An admin standing at the pitch during the second half opened this and read
+  // "Scheduled -- Registration -- Full" with the stage they are actually in off the
+  // right-hand edge. Put the live stage on screen instead.
+  const railRef = useRef(null);
+  useEffect(() => {
+    const active = railRef.current?.querySelector('[aria-current="step"]');
+    // `nearest` so it does not scroll the PAGE to reach a rail that is already in view.
+    active?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [currentIndex]);
+
   return (
     // min-w-0 is what makes overflow-x-auto actually work here. A flex item defaults
     // to min-width:auto, which means it refuses to shrink below its content -- so the
     // rail widened the whole page by 100px on a phone instead of scrolling inside
     // itself, and every screen using it scrolled sideways.
-    <ol className={cn('flex min-w-0 max-w-full items-center gap-1 overflow-x-auto scrollbar-none', className)}>
+    <ol ref={railRef} className={cn('flex min-w-0 max-w-full items-center gap-1 overflow-x-auto scrollbar-none', className)}>
       {LIFECYCLE.map((stage, i) => {
         const done = i < currentIndex;
         const active = i === currentIndex;

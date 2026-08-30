@@ -110,7 +110,7 @@ export function DistrictDetail() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
-      <Link to="/districts" className="mb-4 inline-flex items-center gap-1 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]">
+      <Link to="/districts" className="mb-2 -ml-2 inline-flex min-h-11 items-center gap-1 px-2 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]">
         <ChevronLeft className="size-4" /> All districts
       </Link>
 

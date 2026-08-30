@@ -308,7 +308,12 @@ const GROUP_TONE = {
   FWD: 'bg-[var(--danger-soft)] text-[var(--danger-soft-fg)]',
 };
 
-export function PositionChip({ position, className, size = 'md' }) {
+/**
+ * @param {boolean} muted  A position they will fill in at, rather than their own. Drawn
+ *   as an outline so a row of "RW CM CAM" reads as one main and two alternates at a
+ *   glance, instead of three equal claims.
+ */
+export function PositionChip({ position, className, size = 'md', muted = false }) {
   if (!position) return null;
   const group = POSITION_GROUP[position] ?? 'MID';
   return (
@@ -316,7 +321,9 @@ export function PositionChip({ position, className, size = 'md' }) {
       className={cn(
         'inline-grid place-items-center font-bold rounded-[var(--radius-xs)] uppercase',
         size === 'sm' ? 'h-5 min-w-8 text-[0.625rem] px-1' : 'h-6 min-w-10 text-[0.6875rem] px-1.5',
-        GROUP_TONE[group],
+        muted
+          ? 'border border-[var(--border-default)] text-[var(--fg-muted)]'
+          : GROUP_TONE[group],
         className
       )}
     >

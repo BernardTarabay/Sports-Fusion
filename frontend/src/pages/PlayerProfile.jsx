@@ -4,14 +4,14 @@
 // are a swipe rail on mobile, and the match history is the part people actually come
 // back for -- their own football story inside Sports Fusion.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 import { Trophy, CalendarCheck, Flame } from 'lucide-react';
 import { usePlayer } from '../hooks/index.js';
 import { useSession } from '../state/session.jsx';
 import {
   Card, Tabs, TabsList, TabsTrigger, TabsContent, Skeleton, ErrorState, EmptyState,
-  SectionHeading, Modal, Badge, Progress,
+  SectionHeading, Modal, Badge, Progress, Button,
 } from '../components/ui/index.jsx';
 import {
   PlayerHero, StatGrid, MatchTimeline, ShareablePlayerCard,
@@ -20,6 +20,9 @@ import { RatingChart } from '../components/charts/index.jsx';
 import { FormStrip } from '../components/football/index.jsx';
 import { AchievementCard } from '../components/rewards/index.jsx';
 import { percent } from '../lib/format.js';
+import { toast } from 'sonner';
+import { playerService } from '../api/services.js';
+import { PositionPicker } from '../components/players/PositionPicker.jsx';
 
 export default function PlayerProfile({ self = false }) {
   const { id } = useParams();
@@ -28,6 +31,7 @@ export default function PlayerProfile({ self = false }) {
 
   const { data, isLoading, isError, refetch } = usePlayer(targetId);
   const [shareOpen, setShareOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   if (isLoading) return <ProfileSkeleton />;
   if (isError || !data) {
@@ -58,6 +62,7 @@ export default function PlayerProfile({ self = false }) {
         player={player}
         ratingHistory={ratingHistory}
         onShare={() => setShareOpen(true)}
+        onEdit={self ? () => setEditOpen(true) : undefined}
       />
 
       <div className="mt-6">
@@ -156,6 +161,16 @@ export default function PlayerProfile({ self = false }) {
         </Tabs>
       </div>
 
+      {/* There was no way to change your positions after signing up -- the endpoint
+          existed and nothing in the app called it, so whatever you tapped once at a
+          pitch was permanent. */}
+      <EditPositions
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        player={player}
+        onSaved={refetch}
+      />
+
       <Modal open={shareOpen} onOpenChange={setShareOpen} title="Your player card" size="sm">
         <div className="flex justify-center">
           <ShareablePlayerCard player={player} />
@@ -165,6 +180,65 @@ export default function PlayerProfile({ self = false }) {
         </p>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * Change where you play.
+ *
+ * Positions are the one thing on a profile a player owns outright: their rating is
+ * earned, their record is history, but this is a statement of preference that ought to
+ * change when they start dropping into midfield.
+ */
+function EditPositions({ open, onOpenChange, player, onSaved }) {
+  const [primary, setPrimary] = useState(player.position ?? null);
+  const [secondary, setSecondary] = useState(player.secondaryPositions ?? []);
+  const [busy, setBusy] = useState(false);
+
+  // Reset to what the server holds each time it opens, so an abandoned edit does not
+  // reappear as if it had been saved.
+  useEffect(() => {
+    if (!open) return;
+    setPrimary(player.position ?? null);
+    setSecondary(player.secondaryPositions ?? []);
+  }, [open, player.position, player.secondaryPositions]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await playerService.update({
+        preferredPosition: primary ?? undefined,
+        secondaryPositions: secondary,
+        isGoalkeeper: primary === 'GK' || secondary.includes('GK'),
+      });
+      toast.success('Positions saved');
+      onOpenChange(false);
+      onSaved?.();
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Where you play"
+      description="Your main position, and up to two more you are happy to fill in at."
+      footer={
+        <Button className="w-full" size="lg" loading={busy} onClick={save} disabled={!primary}>
+          Save
+        </Button>
+      }
+    >
+      <PositionPicker
+        primary={primary}
+        secondary={secondary}
+        onChange={({ primary: p, secondary: s }) => { setPrimary(p); setSecondary(s); }}
+      />
+    </Modal>
   );
 }
 

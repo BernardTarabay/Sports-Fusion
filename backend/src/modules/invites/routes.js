@@ -152,6 +152,10 @@ publicRouter.post(
       code: z.string().regex(/^\d{6}$/, 'Enter the six digit code'),
       displayName: z.string().trim().min(2).max(80),
       preferredPosition: z.enum(POSITIONS).optional(),
+      // Two more they are happy to play. The balancer weights the first most heavily
+      // and treats these as workable, which is how a squad of eleven gets a shape
+      // rather than four people who all say "midfield".
+      secondaryPositions: z.array(z.enum(POSITIONS)).max(2).optional(),
       isGoalkeeper: z.boolean().default(false),
       districtId: uuid.optional(),
     }),

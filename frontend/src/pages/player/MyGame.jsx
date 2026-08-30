@@ -28,9 +28,8 @@ import {
   Button, Card, Badge, Skeleton, EmptyState, ErrorState, Avatar,
 } from '../../components/ui/index.jsx';
 import { CapacityMeter, TeamCrest, ScoreLine } from '../../components/football/index.jsx';
-import { FootballPitch } from '../../components/football/FootballPitch.jsx';
 import { VenueBadge } from '../../components/football/VenueBadge.jsx';
-import { pickRelevantGame } from '../Matchday.jsx';
+import { pickRelevantGame } from '../../lib/relevantGame.js';
 
 const teamLabel = (c) => (c ? c[0].toUpperCase() + c.slice(1) : null);
 
@@ -210,15 +209,21 @@ export default function MyGame() {
             />
           </div>
 
-          {/* 2. AM I IN? ------------------------------------------------- */}
+          {/* 2. AM I IN? -------------------------------------------------
+
+              `sm:flex-1`, never a bare `flex-1`. This row is a COLUMN on a phone, and in a
+              column the main axis is vertical -- so `flex: 1 1 0%` sets the button's
+              flex-basis HEIGHT to zero and lets it shrink. The primary call to action
+              rendered 26px tall on mobile, half a thumb, while its `h-13` sat there being
+              overridden. In the column the buttons already stretch to full width. */}
           <div className="mt-5 flex flex-col gap-2 sm:flex-row">
             {!isAuthenticated ? (
-              <Button to="/login" size="lg" className="flex-1">Sign in to join</Button>
+              <Button to="/login" size="lg" className="w-full sm:flex-1">Sign in to join</Button>
             ) : game.isRegistered ? (
               <Button
                 variant="secondary"
                 size="lg"
-                className="flex-1"
+                className="w-full sm:flex-1"
                 loading={leave.isPending}
                 onClick={() => leave.mutate({ gameId: game.id })}
                 disabled={!can.canJoin && !can.reason?.includes('full')}
@@ -228,14 +233,14 @@ export default function MyGame() {
             ) : can.canJoin ? (
               <Button
                 size="lg"
-                className="flex-1"
+                className="w-full sm:flex-1"
                 loading={join.isPending}
                 onClick={() => join.mutate({ gameId: game.id })}
               >
                 {can.label}
               </Button>
             ) : (
-              <p className="flex-1 rounded-[var(--radius-md)] bg-[var(--bg-sunken)] px-4 py-3 text-center text-sm text-[var(--fg-secondary)]">
+              <p className="w-full rounded-[var(--radius-md)] sm:flex-1 bg-[var(--bg-sunken)] px-4 py-3 text-center text-sm text-[var(--fg-secondary)]">
                 {can.label}
               </p>
             )}
@@ -306,10 +311,6 @@ export default function MyGame() {
             {teams.map((team) => <TeamSheet key={team.id} team={team} meId={meId} />)}
           </div>
 
-          {/* The shape, for anyone who wants it. Read-only: no drag, no controls. */}
-          <Card className="mt-3 overflow-hidden p-2">
-            <FootballPitch teams={teams} showRatings={false} />
-          </Card>
         </div>
       ) : (
         <Card className="mt-6 p-6">
@@ -326,7 +327,10 @@ export default function MyGame() {
       )}
 
       <div className="mt-6 text-center">
-        <Link to="/games" className="text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]">
+        <Link
+          to="/games"
+          className="inline-flex min-h-11 items-center justify-center px-4 text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+        >
           All fixtures →
         </Link>
       </div>

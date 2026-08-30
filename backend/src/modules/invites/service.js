@@ -198,8 +198,21 @@ export async function getInviteForJoin(token) {
  * numbers the holder does not control. Without that, one leaked link plus a script is a
  * few thousand junk players with plausible Lebanese numbers.
  */
+/**
+ * The other positions somebody is happy to play, cleaned up.
+ *
+ * Drops the primary if they picked it twice, de-duplicates, and caps at two — so the
+ * whole answer is "here, or one of these two". `secondary_positions` has existed since
+ * migration 004 and the balancer already scores against it; the intake simply never
+ * asked, so everyone arrived as one label or as "anywhere".
+ */
+function cleanSecondaries(primary, list = []) {
+  return [...new Set(list.filter((p) => p && p !== primary))].slice(0, 2);
+}
+
 export async function claimInvite({
-  token, phone, displayName, preferredPosition, isGoalkeeper = false, districtId, context = {},
+  token, phone, displayName, preferredPosition, secondaryPositions = [],
+  isGoalkeeper = false, districtId, context = {},
 }) {
   return withTransaction(async (client) => {
     const { rows } = await client.query(
@@ -227,10 +240,11 @@ export async function claimInvite({
       if (hasPlayer.length === 0) {
         await client.query(
           `INSERT INTO players (user_id, home_district_id, jersey_name, preferred_position,
-                                is_goalkeeper, joined_via)
-           VALUES ($1, $2, $3, $4, $5, 'invite_link')`,
+                                secondary_positions, is_goalkeeper, joined_via)
+           VALUES ($1, $2, $3, $4, $5, $6, 'invite_link')`,
           [user.id, districtId ?? invite.district_id, user.display_name,
-            preferredPosition ?? null, isGoalkeeper]
+            preferredPosition ?? null,
+            cleanSecondaries(preferredPosition, secondaryPositions), isGoalkeeper]
         );
       }
     } else {
@@ -246,10 +260,11 @@ export async function claimInvite({
 
       await client.query(
         `INSERT INTO players (user_id, home_district_id, jersey_name, preferred_position,
-                              is_goalkeeper, joined_via)
-         VALUES ($1, $2, $3, $4, $5, 'invite_link')`,
+                              secondary_positions, is_goalkeeper, joined_via)
+         VALUES ($1, $2, $3, $4, $5, $6, 'invite_link')`,
         [user.id, districtId ?? invite.district_id, displayName.trim(),
-          preferredPosition ?? null, isGoalkeeper]
+          preferredPosition ?? null,
+          cleanSecondaries(preferredPosition, secondaryPositions), isGoalkeeper]
       );
       await client.query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'player')`, [user.id]);
     }

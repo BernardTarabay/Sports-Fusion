@@ -21,6 +21,7 @@ import { useGames, useMatchday, useCountdown, keys } from '../hooks/index.js';
 import { useSession } from '../state/session.jsx';
 import { matchdayService, adminService } from '../api/services.js';
 import { fitSquadToFormation, defaultFormation } from '../lib/formations.js';
+import { pickRelevantGame } from '../lib/relevantGame.js';
 import { cn } from '../lib/cn.js';
 import { time, dayAndDate, relativeDay, pad, placeOf } from '../lib/format.js';
 import {
@@ -36,32 +37,6 @@ import {
   WaitlistPanel, GameStatusRail, CancelGameDialog,
 } from '../components/matchday/index.jsx';
 import { AssistantDock } from '../components/ai/Assistant.jsx';
-
-/* --------------------------------------------------------------------------
-   Which game should we open?
-
-   In progress > next upcoming > most recent. An admin at 8:15pm wants tonight's
-   9pm fixture without searching for it.
-   -------------------------------------------------------------------------- */
-export function pickRelevantGame(games = []) {
-  if (games.length === 0) return null;
-  const now = Date.now();
-
-  const live = games.find(
-    (g) =>
-      g.status !== 'cancelled' &&
-      new Date(g.kickoffAt).getTime() <= now &&
-      new Date(g.kickoffAt).getTime() + (g.durationMinutes ?? 90) * 60_000 > now
-  );
-  if (live) return live;
-
-  const upcoming = games
-    .filter((g) => g.status !== 'cancelled' && new Date(g.kickoffAt).getTime() > now)
-    .sort((a, b) => new Date(a.kickoffAt) - new Date(b.kickoffAt))[0];
-  if (upcoming) return upcoming;
-
-  return [...games].sort((a, b) => new Date(b.kickoffAt) - new Date(a.kickoffAt))[0];
-}
 
 function Countdown({ target }) {
   const { days, hours, minutes, seconds, expired } = useCountdown(target);
@@ -377,8 +352,35 @@ export default function Matchday() {
   const movePlayer = async (playerId, { teamId, slotIndex }) => {
     if (locked) { toast.error('Teams are locked. Unlock them to make changes.'); return; }
 
-    const fromTeam = teams.find((t) => t.players.some((p) => p.id === playerId));
-    const toTeam = teams.find((t) => t.id === teamId);
+    // THE BOARD IS SOMETIMES A PREVIEW.
+    //
+    // Until teams are generated the pitch draws `provisionalTeams`, whose ids
+    // ("provisional-black") are not rows in the database. This looked the drop target up
+    // in the REAL teams, found nothing, and returned -- so on any game that had not
+    // filled yet, dragging gave you the lifted marker, the dashed ring on the slot, and
+    // then silently nothing at all. That is every game with an empty slot in it, which
+    // is the exact case the drag exists for.
+    //
+    // The server refuses to place anyone before teams exist (NO_TEAMS), so make them
+    // exist, then put the player where they were actually dropped. Sides are matched by
+    // colour, so the black shirt the admin aimed at is still the black shirt.
+    let sheet = teams;
+    const materialised = teams.length !== 2;
+    if (sheet.length !== 2) {
+      const colour = pitchTeams.find((t) => t.id === teamId)?.color;
+      const created = await materialiseTeams({
+        onError: (error) =>
+          toast.error('Positions cannot be saved yet', {
+            description: `${error.message}. The lineup on screen is a preview until teams are generated.`,
+          }),
+      });
+      if (!created) return;
+      sheet = created.teams;
+      teamId = (sheet.find((t) => t.color === colour) ?? sheet[0]).id;
+    }
+
+    const fromTeam = sheet.find((t) => t.players.some((p) => p.id === playerId));
+    const toTeam = sheet.find((t) => t.id === teamId);
     if (!fromTeam || !toTeam) return;
 
     const player = fromTeam.players.find((p) => p.id === playerId);
@@ -401,7 +403,7 @@ export default function Matchday() {
       ? { ...occupant, slotIndex: fromSlot ?? null, teamId: fromTeam.id, isManualOverride: true }
       : null;
 
-    const next = teams.map((team) => {
+    const next = sheet.map((team) => {
       let players = team.players.filter(
         (p) => p.id !== playerId && (!displaced || p.id !== displaced.id)
       );
@@ -422,24 +424,48 @@ export default function Matchday() {
       occupant && occupant.id !== playerId
         ? `${player.name} ↔ ${occupant.name}`
         : `${player.name} moved`,
-      { action: { label: 'Undo', onClick: () => undo() } }
+      // No Undo offered on the drag that CREATED the teams: there is no earlier sheet to
+      // go back to, and an Undo button that does nothing is worse than no button.
+      materialised
+        ? { description: 'Teams generated, and your move applied on top.' }
+        : { action: { label: 'Undo', onClick: () => undo() } }
     );
   };
 
-  const generateTeams = async () => {
-    pushHistory('Previous teams restored');
+  /**
+   * Turn the roster into two real teams and return them.
+   *
+   * Split out of `generateTeams` because a drag on the provisional board needs the
+   * created sheet BACK to place a player on it, not just applied to the screen.
+   * Returns null when it could not be done, so callers can stop quietly.
+   */
+  const materialiseTeams = async ({ onError } = {}) => {
     setGenerating(true);
     try {
       const result = await adminService.generateTeams(game.id, {});
       const { game: next } = await matchdayService.setTeams(game.id, result.teams);
-      applyGame({ ...next, status: 'teams_generated' });
-      toast.success('Teams ready', {
-        description: `Picked from ${result.candidatesEvaluated.toLocaleString('en-GB')} possible splits.`,
-      });
+      // The server moves the fixture to teams_generated itself, so the projection that
+      // comes back is already right -- forcing the status here would overwrite a game
+      // that is mid-match with a status from before kickoff.
+      applyGame(next);
+      return { teams: next?.teams ?? result.teams, considered: result.candidatesEvaluated };
     } catch (error) {
-      toast.error(error.message);
+      // The caller frames it, because "Only 8 of 22 players are confirmed" makes sense
+      // under a Generate button and is a non-sequitur after a drag.
+      (onError ?? ((e) => toast.error(e.message)))(error);
+      return null;
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const generateTeams = async () => {
+    pushHistory('Previous teams restored');
+    const created = await materialiseTeams();
+    if (created) {
+      toast.success('Teams ready', {
+        description: `Picked from ${(created.considered ?? 0).toLocaleString('en-GB')} possible splits.`,
+      });
     }
   };
 
@@ -611,7 +637,11 @@ export default function Matchday() {
               currentId={game.id}
               onSelect={(nextId) => {
                 setSelectedPlayerId(null);
-                navigate(isAdmin ? `/matchday/${nextId}` : `/matchday/${nextId}`);
+                // /admin/matchday, not /matchday. This screen lives in the admin app
+                // now; `/matchday/:id` is a legacy player URL that redirects to
+                // /my-game, so the fixture rail -- the way an admin moves between
+                // games -- was ejecting them out of the workspace entirely.
+                navigate(`/admin/matchday/${nextId}`);
               }}
             />
           </div>
