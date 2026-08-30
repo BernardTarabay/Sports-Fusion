@@ -204,6 +204,13 @@ export const config = Object.freeze({
     // provider, because the provider being unset is exactly the state a half-configured
     // deploy is in.
     exposeCode: otpProvider === 'log' && env.NODE_ENV !== 'production',
+    // WHERE the code arrives, for the sign-in screen to tell the truth about.
+    //
+    // The screen used to say "Check WhatsApp for a six digit code" unconditionally,
+    // which is the wrong instruction the moment codes go by SMS -- somebody stares at
+    // a WhatsApp thread while the message sits in their Messages app. The provider is
+    // a deployment detail; the channel is the only part a person needs.
+    channel: otpProvider === 'twilio' ? 'sms' : otpProvider === 'whatsapp' ? 'whatsapp' : null,
   },
 
   twilio: {

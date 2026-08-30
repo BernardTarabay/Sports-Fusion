@@ -85,6 +85,10 @@ export async function startChallenge({ phone, purpose = 'login', context = {} })
       expiresAt,
       expiresInSeconds: CODE_TTL_MINUTES * 60,
       delivered: sent.delivered,
+      // 'sms' | 'whatsapp' | null. The screen has to name the app the message is in --
+      // telling somebody to check WhatsApp for an SMS is a dead end they cannot get
+      // out of. Not sensitive: it is a property of the deployment, not of the account.
+      channel: config.otp.channel,
       // Belt and braces. sendLoginCode already withholds this outside development; the
       // second gate is here because this is the object that goes on the wire, and a
       // future provider returning a devCode by accident must not be able to leak one.

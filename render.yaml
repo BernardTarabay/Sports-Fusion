@@ -73,10 +73,31 @@ services:
       # and returning it means anyone who knows a number owns that account. The seeded
       # admin password still works, so the league is reachable either way.
       #
-      # To switch it on: set OTP_PROVIDER=whatsapp with WHATSAPP_PHONE_NUMBER_ID and
-      # WHATSAPP_ACCESS_TOKEN, or OTP_PROVIDER=twilio with the Twilio credentials.
+      # To switch it on: set OTP_PROVIDER=twilio with the Twilio keys below, or
+      # OTP_PROVIDER=whatsapp with WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN.
       - key: WHATSAPP_ENABLED
         value: "false"
+
+      # DELIBERATELY NOT GIVEN A VALUE HERE.
+      #
+      # `sync: false` means Render asks for it and never overwrites what is already set.
+      # Pinning OTP_PROVIDER=twilio in the blueprint would be worse than useless: the API
+      # refuses to boot when the provider is named and its credentials are not there, so
+      # a blueprint sync ahead of the secrets would take the whole league offline over a
+      # sign-in method. Set the three below first, then set this to `twilio`.
+      - key: OTP_PROVIDER
+        sync: false
+
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      # One of these two. TWILIO_MESSAGING_SERVICE_SID wins when both are set, and is the
+      # better choice -- it handles sender selection, opt-outs and per-country rules.
+      - key: TWILIO_FROM
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false
 
   # ---------------------------------------------------------------------------
   # The worker

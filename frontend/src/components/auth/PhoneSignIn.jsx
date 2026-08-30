@@ -1,4 +1,7 @@
-// Phone sign-in: number, then the six digits that came back on WhatsApp.
+// Phone sign-in: number, then the six digits that came back.
+//
+// The channel -- SMS or WhatsApp -- is a deployment setting, so nothing here names one
+// until the server has said which it used.
 //
 // Used by the login page and by the QR join page, which need the same two steps with a
 // different ending — one signs you in, the other hands the verified number to the invite
@@ -9,9 +12,10 @@
 // the phone, in the dark, on a bad connection.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowLeft, MessageCircle } from 'lucide-react';
+import { ArrowLeft, MessageCircle, MessageSquare, AlertTriangle } from 'lucide-react';
 import { phoneAuthService } from '../../api/services.js';
 import { Button, Field, Input } from '../ui/index.jsx';
+import { cn } from '../../lib/cn.js';
 
 /**
  * Lebanese numbers, typed the way people actually type them.
@@ -68,7 +72,8 @@ function CodeInput({ value, onChange, onComplete, invalid }) {
       }}
       inputMode="numeric"
       autoComplete="one-time-code"
-      // iOS and Android surface the code from the WhatsApp notification for this pattern.
+      // iOS and Android offer the code straight from the notification for this pattern,
+      // whether it arrived by SMS or in WhatsApp.
       pattern="\d{6}"
       maxLength={6}
       autoFocus
@@ -158,7 +163,7 @@ export function PhoneSignIn({
       >
         <Field
           label="Phone number"
-          hint="We send a code on WhatsApp. No password to remember."
+          hint="We send you a six digit code. No password to remember."
           error={error}
           htmlFor="phone"
         >
@@ -201,17 +206,40 @@ export function PhoneSignIn({
         {e164}
       </button>
 
-      <div className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--surface-2)] px-3 py-2.5">
-        <MessageCircle className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" aria-hidden />
-        <p className="text-sm text-[var(--fg-secondary)]">
-          {challenge?.delivered === false
-            ? 'WhatsApp is switched off in this environment — the code is in the server log.'
-            : 'Check WhatsApp for a six digit code.'}
-        </p>
-      </div>
+      {/* WHICH APP THE CODE IS IN.
+          This said "Check WhatsApp" no matter how the code was sent, so switching the
+          deployment to SMS would have left people watching a WhatsApp thread while the
+          message sat in Messages. The server names the channel; this repeats it.
 
-      {/* Development only: the API returns the code when WhatsApp is disabled, so local
-          work does not need a WhatsApp Business account. Never present in production. */}
+          And `delivered: false` has two very different causes. Locally it means there is
+          no provider and the code is on screen below. On a real deploy it means the
+          provider REJECTED the send -- a Twilio trial account will only text numbers
+          verified in its console -- and saying "switched off in this environment" there
+          is both wrong and a dead end. */}
+      {(() => {
+        const failed = challenge?.delivered === false && !challenge?.devCode;
+        const Icon = failed ? AlertTriangle : challenge?.channel === 'sms' ? MessageSquare : MessageCircle;
+        return (
+          <div className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--surface-2)] px-3 py-2.5">
+            <Icon
+              className={cn('mt-0.5 size-4 shrink-0', failed ? 'text-[var(--danger)]' : 'text-[var(--accent)]')}
+              aria-hidden
+            />
+            <p className="text-sm text-[var(--fg-secondary)]">
+              {failed
+                ? 'We could not send the code just now. Check the number, or try again in a moment.'
+                : challenge?.delivered === false
+                  ? 'No message provider is configured here — the code is below.'
+                  : challenge?.channel === 'sms'
+                    ? 'Check your messages for a six digit code.'
+                    : 'Check WhatsApp for a six digit code.'}
+            </p>
+          </div>
+        );
+      })()}
+
+      {/* Development only: the API returns the code when no provider is configured, so
+          local work needs no Twilio or WhatsApp account. Never present in production. */}
       {challenge?.devCode && (
         <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--border)] px-3 py-2 text-center text-sm">
           <span className="text-[var(--fg-tertiary)]">Dev code: </span>

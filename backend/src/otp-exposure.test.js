@@ -33,6 +33,7 @@ const decide = ({ nodeEnv, otpProvider, whatsappEnabled }) => {
     provider,
     canDeliver: provider !== 'log',
     exposeCode: provider === 'log' && nodeEnv !== 'production',
+    channel: provider === 'twilio' ? 'sms' : provider === 'whatsapp' ? 'whatsapp' : null,
   };
 };
 
@@ -87,4 +88,37 @@ test('the shipped configuration agrees with this rule', async () => {
   assert.equal(config.otp.provider, expected.provider);
   assert.equal(config.otp.exposeCode, expected.exposeCode);
   assert.equal(config.otp.canDeliver, expected.canDeliver);
+  assert.equal(config.otp.channel, expected.channel);
+});
+
+// ---------------------------------------------------------------------------
+// Which app the code is in
+//
+// The sign-in screen used to say "Check WhatsApp for a six digit code" whatever the
+// provider was. Under Twilio that sends somebody to a WhatsApp thread to wait for an
+// SMS, which is a dead end they cannot reason their way out of -- so the server names
+// the channel and the screen repeats it.
+// ---------------------------------------------------------------------------
+
+test('the channel names where the code actually went', () => {
+  assert.equal(decide({ nodeEnv: 'production', otpProvider: 'twilio' }).channel, 'sms');
+  assert.equal(decide({ nodeEnv: 'production', otpProvider: 'whatsapp' }).channel, 'whatsapp');
+  assert.equal(decide({ nodeEnv: 'production', whatsappEnabled: true }).channel, 'whatsapp');
+  assert.equal(
+    decide({ nodeEnv: 'production', whatsappEnabled: false }).channel, null,
+    'with no provider there is no channel to name'
+  );
+});
+
+test('naming the channel never implies the code is safe to expose', () => {
+  // The channel is a deployment fact and goes on the wire; the code is a secret and
+  // does not. Nothing about adding the first may loosen the second.
+  for (const otpProvider of ['log', 'whatsapp', 'twilio']) {
+    const production = decide({ nodeEnv: 'production', otpProvider });
+    assert.equal(production.exposeCode, false, `provider=${otpProvider}`);
+  }
+  assert.equal(
+    decide({ nodeEnv: 'development', otpProvider: 'twilio' }).exposeCode, false,
+    'a real provider withholds the code even on a laptop -- it was genuinely sent'
+  );
 });
