@@ -69,19 +69,22 @@ function RouteFallback() {
   );
 }
 
-/**
- * The front door, which is a different door depending on who you are.
+/*
+ * THE INDEX IS THE PLAYER APP'S FRONT DOOR, FOR EVERYONE.
  *
- * An admin signing in has come to run a match, not to browse fixtures, and with the mode
- * links gone the player app is a dead end for them. Only the index redirects: a direct
- * link to a game or a profile still resolves, so a shared link works for everybody and
- * an admin who does want the player app can still get there.
+ * This used to bounce an admin to /admin. It was meant to save them a tap; what it
+ * actually did was teleport them out of the app they were looking at with no
+ * explanation, because the player app's own Home tab points here. An admin who tapped
+ * Home to get back to the fixtures found themselves in Operations instead, and the only
+ * honest reaction to that is "how did I get here".
+ *
+ * The tap it saved was already saved anyway: signing in sends an admin straight to
+ * /admin (see Auth.jsx). It was only ever reached by an admin who had deliberately
+ * navigated to the player home -- which is precisely when they want the player home.
+ *
+ * The way between the two apps is now a link in each account menu, which is what both
+ * layouts already claimed. A destination you choose, not a redirect that happens to you.
  */
-function Home() {
-  const { isAdmin, isLoading } = useSession();
-  if (isLoading) return <RouteFallback />;
-  return isAdmin ? <Navigate to="/admin" replace /> : <Landing />;
-}
 
 function RequireAuth({ children }) {
   const { isAuthenticated, isLoading } = useSession();
@@ -107,7 +110,7 @@ export function AppRoutes() {
             THE PLAYER APP
             --------------------------------------------------------------- */}
         <Route element={<AppLayout />}>
-          <Route index element={<Home />} />
+          <Route index element={<Landing />} />
 
           {/* One tap from anywhere to the thing a player came for. */}
           <Route path="my-game" element={<RequireAuth><MyGame /></RequireAuth>} />

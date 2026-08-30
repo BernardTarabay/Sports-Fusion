@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Link, useLocation, Outlet } from 'react-router';
 import {
   Home, CalendarDays, Trophy, Gift, User, MapPin, Sun, Moon, Monitor, LogOut,
-  Goal, X,
+  Goal, X, Shield,
 } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { useSession } from '../state/session.jsx';
@@ -65,7 +65,7 @@ function ThemeToggle({ className }) {
 }
 
 function DesktopNav() {
-  const { isAuthenticated, user, logout } = useSession();
+  const { isAuthenticated, user, logout, isAdmin } = useSession();
 
   return (
     <header className="sticky top-0 z-40 hidden border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/85 backdrop-blur-lg lg:block">
@@ -101,6 +101,17 @@ function DesktopNav() {
 
         {isAuthenticated ? (
           <div className="flex items-center gap-2">
+            {/* The same single door as the phone sheet has. Off to one side, next to the
+                account, rather than in the main nav -- Operations is not a fixtures tab. */}
+            {isAdmin && (
+              <Link
+                to="/admin"
+                className="flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-sm font-medium text-[var(--fg-secondary)] hover:bg-[var(--bg-sunken)] hover:text-[var(--fg-primary)]"
+              >
+                <Shield className="size-4" aria-hidden="true" />
+                Operations
+              </Link>
+            )}
             <Link to="/profile" className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 hover:bg-[var(--bg-sunken)]">
               <Avatar name={user?.displayName} size="sm" />
               <span className="max-w-32 truncate text-sm font-medium">{user?.displayName}</span>
@@ -122,7 +133,7 @@ function DesktopNav() {
 
 function MobileHeader() {
   const [open, setOpen] = useState(false);
-  const { isAuthenticated, user, logout } = useSession();
+  const { isAuthenticated, user, logout, isAdmin } = useSession();
   const location = useLocation();
   const sheetRef = useRef(null);
   const openerRef = useRef(null);
@@ -233,6 +244,26 @@ function MobileHeader() {
               <SheetLink to="/rewards" icon={Gift} label="Rewards" onNavigate={() => setOpen(false)} />
               <SheetLink to="/districts" icon={MapPin} label="Districts" onNavigate={() => setOpen(false)} />
             </nav>
+
+            {/* THE WAY INTO OPERATIONS, AND THE ONLY ONE.
+                Not in the tab bar: five tabs plus a mode toggle is the confusion that
+                got the old dual-mode header removed, and the four people who run this
+                league should not cost the other four thousand a tab.
+
+                But it has to exist. Separating the apps left an admin standing in the
+                player app with no door -- the index quietly redirected them and no other
+                route did, so anyone who arrived on /my-game or /games was simply stuck,
+                which is exactly what happened. */}
+            {isAdmin && (
+              <div className="mt-4 border-t border-[var(--border-subtle)] pt-3">
+                <SheetLink
+                  to="/admin"
+                  icon={Shield}
+                  label="Operations"
+                  onNavigate={() => setOpen(false)}
+                />
+              </div>
+            )}
 
             {/* The footer is desktop-only, so without this a phone never sees the store
                 or the community group at all -- and the phone is the primary device. */}

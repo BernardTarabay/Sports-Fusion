@@ -115,6 +115,18 @@ export function AdminLayout() {
                 role="menu"
                 className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--bg-surface)] py-1 shadow-[var(--shadow-lg)]"
               >
+                {/* The way back. Promised by the comment above this menu since the
+                    split and never actually here, which left an admin who wanted to
+                    check their own game with nowhere to go but the URL bar. */}
+                <Link
+                  to="/my-game"
+                  onClick={() => setMenuOpen(false)}
+                  role="menuitem"
+                  className="flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-[var(--bg-sunken)]"
+                >
+                  <Goal className="size-4 text-[var(--fg-secondary)]" aria-hidden="true" />
+                  Player app
+                </Link>
                 <a
                   href={STORE_URL}
                   target="_blank"
