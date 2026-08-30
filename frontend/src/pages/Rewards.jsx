@@ -17,6 +17,7 @@ import {
   RewardCard, AchievementCard, PointsMeter, RedemptionRow,
 } from '../components/rewards/index.jsx';
 import { compact, relativeTime } from '../lib/format.js';
+import { STORE_URL } from '../lib/links.js';
 
 const REASON_COPY = {
   game_played: 'Played a game',
@@ -77,9 +78,15 @@ export default function Rewards() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
-      <header className="mb-6">
-        <p className="eyebrow">Sports Fusion</p>
-        <h1 className="display text-4xl sm:text-5xl">Rewards</h1>
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="eyebrow">Sports Fusion</p>
+          <h1 className="display text-4xl sm:text-5xl">Rewards</h1>
+        </div>
+        {/* Points redeem into the shop, so the shop should be one tap from the points. */}
+        <Button as="a" href={STORE_URL} target="_blank" rel="noreferrer" variant="secondary">
+          Visit the store
+        </Button>
       </header>
 
       <PointsMeter balance={balance} nextReward={nextReward} />

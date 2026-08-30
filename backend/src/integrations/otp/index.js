@@ -30,9 +30,27 @@ export async function sendLoginCode({ phone, code, ttlMinutes }) {
 
     case 'log':
     default:
-      // Not a failure mode — the default, and how local development works with no
-      // provider account at all. `devCode` comes back so the sign-in form can show it,
-      // which is safe precisely because it only happens when no provider is configured.
+      // No provider. How local development works with no WhatsApp account: the code goes
+      // to the server log and comes back in the response so the sign-in form can show it.
+      //
+      // NEITHER OF THOSE MAY HAPPEN IN PRODUCTION.
+      //
+      // 'log' is not an opt-in for development, it is the DEFAULT -- which means a deploy
+      // that simply has not been given WhatsApp credentials lands here. Returning the code
+      // there is total account takeover: anyone who knows a number, and this community's
+      // numbers are in a WhatsApp group, asks for its login code and is handed it. Writing
+      // it to the log is the same secret sitting in a log aggregator forever.
+      //
+      // So both are gated on config.otp.exposeCode, which is false in production whatever
+      // the provider says.
+      if (!config.otp.exposeCode) {
+        logger.error(
+          { phone },
+          'phone sign-in requested but no OTP provider is configured; the code was NOT sent '
+          + 'and is deliberately not logged. Set OTP_PROVIDER=whatsapp or twilio.'
+        );
+        return { delivered: false, providerMessageId: null, error: 'no_provider' };
+      }
       logger.info({ phone, code, ttlMinutes }, 'no OTP provider configured; code not sent');
       return { delivered: false, providerMessageId: null, devCode: code };
   }

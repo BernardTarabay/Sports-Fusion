@@ -67,13 +67,48 @@ async function standingsFor(monthStart, { districtId = null } = {}) {
         WHERE ma.award_type = 'motm'
         GROUP BY ma.player_id
      ),
-     contributions AS (
+     -- Goals and assists come from TWO places and only one of them is usually filled in.
+     --
+     -- player_match_stats is written when an admin files a full result with a per-player
+     -- stats array. Nothing in the app does that: goals are tapped in on the matchday
+     -- screen during the game and land in match_events. So this read every player's
+     -- contribution as zero, and the Man of the Month card -- the most prestigious thing
+     -- the community awards -- showed "0 GOALS 0 ASSISTS" beside a player who had scored
+     -- four.
+     --
+     -- Both are counted, and the larger wins per player. They are two records of the same
+     -- fact rather than two different facts, so summing them would double-count a game
+     -- that has both.
+     live_events AS (
+       SELECT e.player_id,
+              COUNT(*) FILTER (WHERE e.type = 'goal')::int AS goals
+         FROM match_events e
+         JOIN month_games mg ON mg.id = e.game_id
+        WHERE e.voided_at IS NULL AND e.player_id IS NOT NULL
+        GROUP BY e.player_id
+     ),
+     live_assists AS (
+       SELECT e.assist_id AS player_id, COUNT(*)::int AS assists
+         FROM match_events e
+         JOIN month_games mg ON mg.id = e.game_id
+        WHERE e.voided_at IS NULL AND e.assist_id IS NOT NULL
+        GROUP BY e.assist_id
+     ),
+     filed_stats AS (
        SELECT s.player_id,
               COALESCE(SUM(s.goals), 0)::int   AS goals,
               COALESCE(SUM(s.assists), 0)::int AS assists
          FROM player_match_stats s
          JOIN month_games mg ON mg.id = s.game_id
         GROUP BY s.player_id
+     ),
+     contributions AS (
+       SELECT COALESCE(fs.player_id, le.player_id, la.player_id) AS player_id,
+              GREATEST(COALESCE(fs.goals, 0),   COALESCE(le.goals, 0))   AS goals,
+              GREATEST(COALESCE(fs.assists, 0), COALESCE(la.assists, 0)) AS assists
+         FROM filed_stats fs
+         FULL JOIN live_events  le ON le.player_id = fs.player_id
+         FULL JOIN live_assists la ON la.player_id = COALESCE(fs.player_id, le.player_id)
      ),
      -- The rating a player carried through the month: the mean of where each game left
      -- them. A single blow-out game moves this less than taking the end-of-month value.

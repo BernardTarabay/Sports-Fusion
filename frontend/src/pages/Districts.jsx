@@ -6,7 +6,7 @@
 // an abstract blob either, because Lebanese players would spot the difference at once.
 
 import { Link, useParams } from 'react-router';
-import { MapPin, Users, TrendingUp, ChevronLeft } from 'lucide-react';
+import { MapPin, ChevronLeft } from 'lucide-react';
 import { useDistricts, useDistrict } from '../hooks/index.js';
 import {
   Card, Skeleton, EmptyState, ErrorState, SectionHeading, Button, StatCard, Badge,
@@ -60,7 +60,7 @@ export function DistrictsIndex() {
 
                   <dl className="mt-5 grid grid-cols-3 gap-2 text-center">
                     <div>
-                      <dd className="display text-xl tnum">{compact(district.players * 32)}</dd>
+                      <dd className="display text-xl tnum">{compact(district.players)}</dd>
                       <dt className="eyebrow text-[0.5625rem]">Players</dt>
                     </div>
                     <div>
@@ -102,7 +102,11 @@ export function DistrictDetail() {
     return <div className="mx-auto max-w-4xl px-4 py-16"><ErrorState title="District not found" onRetry={refetch} /></div>;
   }
 
-  const { district, upcoming, recent, venues, leaderboard } = data;
+  // Defaulted, because a district with no fixtures and no venues is an ordinary state
+    // and `upcoming.map` on undefined is a blank page with a console error.
+  const {
+    district, upcoming = [], recent = [], venues = [], leaderboard = [],
+  } = data;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
@@ -116,10 +120,10 @@ export function DistrictDetail() {
       </header>
 
       <div className="mb-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Active games" value={district.activeGames} tone="accent" />
-        <StatCard label="Players" value={compact(district.players * 32)} />
+        <StatCard label="Active games" value={district.activeGames ?? 0} tone="accent" />
+        <StatCard label="Players" value={compact(district.players)} />
         <StatCard label="Avg. occupancy" value={percent(district.occupancy)} />
-        <StatCard label="Venues" value={district.venues} />
+        <StatCard label="Venues" value={district.venues ?? 0} />
       </div>
 
       <section className="mb-12">
@@ -142,15 +146,24 @@ export function DistrictDetail() {
         <section>
           <SectionHeading eyebrow="Rankings" title={`Top in ${district.name}`} />
           <Card className="divide-y divide-[var(--border-subtle)] p-1">
-            {leaderboard.slice(0, 8).map((player) => (
-              <PlayerCard key={player.id} player={player} rank={player.rank} href={`/players/${player.id}`} />
-            ))}
+            {leaderboard.length === 0 ? (
+              <p className="p-4 text-sm text-[var(--fg-secondary)]">
+                Nobody is ranked here yet. Ratings appear once games have been played.
+              </p>
+            ) : (
+              leaderboard.slice(0, 8).map((player) => (
+                <PlayerCard key={player.id} player={player} rank={player.rank} href={`/players/${player.id}`} />
+              ))
+            )}
           </Card>
         </section>
 
         <section>
           <SectionHeading eyebrow="Where you play" title="Venues" />
           <div className="space-y-3">
+            {venues.length === 0 && (
+              <p className="text-sm text-[var(--fg-secondary)]">No pitches listed here yet.</p>
+            )}
             {venues.map((venue) => (
               <Card key={venue.id} className="p-4">
                 <p className="display text-lg">{venue.name}</p>

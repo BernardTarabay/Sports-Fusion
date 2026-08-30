@@ -14,7 +14,7 @@ import {
 } from '../../components/ui/index.jsx';
 import { BarSeries } from '../../components/charts/index.jsx';
 import { CapacityMeter, GameStatusChip } from '../../components/football/index.jsx';
-import { relativeDay, time, percent, compact } from '../../lib/format.js';
+import { relativeDay, time, percent } from '../../lib/format.js';
 
 const ACTION_COPY = {
   generate_teams: { label: 'Teams needed', cta: 'Build teams', tone: 'danger' },
@@ -39,7 +39,7 @@ function ActionRow({ action }) {
       />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">
-          {action.game.districtName}
+          {action.game.venue?.name ?? action.game.districtName}
           <span className="ml-2 font-normal text-[var(--fg-muted)]">
             {relativeDay(action.game.kickoffAt)} · {time(action.game.kickoffAt)}
           </span>
@@ -118,7 +118,7 @@ export default function AdminDashboard() {
         )}
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr] [&>*]:min-w-0">
         <section>
           <SectionHeading
             eyebrow="Next up"
@@ -138,8 +138,10 @@ export default function AdminDashboard() {
                       <p className="text-xs text-[var(--fg-muted)] tnum">{time(game.kickoffAt)}</p>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{game.districtName}</p>
-                      <p className="truncate text-xs text-[var(--fg-muted)]">{game.venue?.name}</p>
+                      <p className="truncate text-sm font-medium">
+                        {game.venue?.name ?? game.districtName}
+                      </p>
+                      <p className="truncate text-xs text-[var(--fg-muted)]">{game.districtName}</p>
                     </div>
                     <div className="hidden w-32 sm:block">
                       <CapacityMeter
@@ -153,7 +155,9 @@ export default function AdminDashboard() {
                     <span className="w-14 text-right text-sm tnum">
                       {game.confirmedCount}/{game.capacity}
                     </span>
-                    <GameStatusChip status={game.status} confirmed={game.confirmedCount} capacity={game.capacity} />
+                    <div className="hidden shrink-0 sm:block">
+                      <GameStatusChip status={game.status} confirmed={game.confirmedCount} capacity={game.capacity} />
+                    </div>
                   </Link>
                 </li>
               ))}

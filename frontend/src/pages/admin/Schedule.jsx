@@ -16,10 +16,10 @@
 // The next five occurrences are always visible, because the useful question is not "what
 // rules exist" but "what is coming".
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, Plus, Check, X, Trash2 } from 'lucide-react';
+import { CalendarClock, Plus, Check, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { scheduleService, adminService } from '../../api/services.js';
@@ -28,7 +28,7 @@ import {
   Button, Card, Badge, Field, Input, Select, Modal, Skeleton, EmptyState, SectionHeading,
   Segmented,
 } from '../../components/ui/index.jsx';
-import { relativeDay, time, dayNumber, monthName, shortDay } from '../../lib/format.js';
+import { time, dayNumber, monthName, shortDay } from '../../lib/format.js';
 
 const WEEKDAYS = [
   { value: 0, label: 'Sunday' }, { value: 1, label: 'Monday' }, { value: 2, label: 'Tuesday' },
@@ -383,7 +383,7 @@ export default function AdminSchedule() {
                   setForm((f) => ({
                     ...f,
                     venueId,
-                    capacity: venue?.default_capacity ?? f.capacity,
+                    capacity: venue?.capacity ?? f.capacity,
                   }));
                 }}
               >

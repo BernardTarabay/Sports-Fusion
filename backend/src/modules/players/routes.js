@@ -3,13 +3,19 @@ import { z } from 'zod';
 import * as playerService from './service.js';
 import { validate, asyncHandler } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { requireAdmin } from '../../middleware/authorize.js';
+import { requireAdmin, requireDistrictAccess } from '../../middleware/authorize.js';
 import { POSITIONS } from '../teams/formation.js';
 
 const router = Router();
 
 const uuid = z.string().uuid();
 const position = z.enum(POSITIONS);
+
+// The district a player answers to. Null for a player with no home district, which
+// requireDistrictAccess refuses for a district admin and allows for a global one --
+// the right way round: nobody's district admin should be able to reach a player who
+// is not in their district, and somebody has to be able to.
+const playerDistrict = (req) => playerService.districtOfPlayer(req.params.id);
 
 const preferencesSchema = z.object({
   jerseyName: z.string().trim().min(1).max(40).optional(),
@@ -51,11 +57,19 @@ router.post(
   })
 );
 
+// The whole profile page: identity, career numbers, match history, rating history and
+// achievements.
+//
+// The page destructures all five and this used to answer with the first one only, nested
+// differently from the way every component reads it -- so the hero showed a question mark
+// for a name it had been given, every stat showed a dash, and the Matches, Form and
+// Achievements tabs were empty. See getPlayerPage.
 router.get(
   '/me',
   authenticate,
   asyncHandler(async (req, res) => {
-    res.json({ player: await playerService.getProfileByUserId(req.user.id) });
+    const playerId = await playerService.playerIdForUser(req.user.id);
+    res.json(await playerService.getPlayerPage(playerId));
   })
 );
 
@@ -121,7 +135,7 @@ router.get(
   authenticate,
   validate({ params: z.object({ id: uuid }) }),
   asyncHandler(async (req, res) => {
-    res.json({ player: await playerService.getProfile(req.params.id) });
+    res.json(await playerService.getPlayerPage(req.params.id));
   })
 );
 
@@ -136,6 +150,7 @@ router.delete(
   authenticate,
   requireAdmin,
   validate({ params: z.object({ id: uuid }) }),
+  requireDistrictAccess(playerDistrict),
   asyncHandler(async (req, res) => {
     res.json(await playerService.deletePlayer({ playerId: req.params.id, actorUserId: req.user.id }));
   })
@@ -146,6 +161,7 @@ router.put(
   authenticate,
   requireAdmin,
   validate({ params: z.object({ id: uuid }), body: ratingSchema }),
+  requireDistrictAccess(playerDistrict),
   asyncHandler(async (req, res) => {
     const player = await playerService.setRating({
       playerId: req.params.id, ...req.body, actorUserId: req.user.id,
@@ -159,6 +175,7 @@ router.get(
   authenticate,
   requireAdmin,
   validate({ params: z.object({ id: uuid }) }),
+  requireDistrictAccess(playerDistrict),
   asyncHandler(async (req, res) => {
     res.json({ history: await playerService.getRatingHistory(req.params.id) });
   })

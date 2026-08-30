@@ -5,6 +5,7 @@ import { query, withTransaction } from '../../database/pool.js';
 import { publish, EventTypes } from '../../lib/events.js';
 import { NotFoundError, ConflictError } from '../../lib/errors.js';
 import { generateAnnouncement } from '../../integrations/whatsapp/announcements.js';
+import { venueLogoPath } from '../../lib/venueLogo.js';
 import config from '../../config/index.js';
 
 const DAY_SLUGS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -25,7 +26,87 @@ const GAME_COLUMNS = `
   g.confirmed_count, g.waitlist_count, g.cancelled_reason, g.created_at,
   d.name AS district_name, d.slug AS district_slug,
   v.name AS venue_name, v.google_maps_url AS venue_maps_url, v.address AS venue_address,
-  v.logo_url AS venue_logo
+  -- Whether there is a badge, and when it last changed. NOT the badge itself: it is
+  -- 50-60kb of base64, it repeats on every game in the list, and it is the reason a
+  -- four-game response weighed 238kb. The bytes come from /api/venues/:id/logo.
+  (v.logo_url IS NOT NULL) AS venue_has_logo, v.updated_at AS venue_updated_at
+`;
+
+/**
+ * The score of a finished game, folded into the shape the UI renders.
+ *
+ * Every result surface in the app -- the fixture card, the game page, match of the week,
+ * the admin summary, a player's history -- reads `game.result`, and nothing was putting
+ * one there, so a completed match showed no score anywhere. This is that object, and it
+ * is deliberately built from the same rows `results/service.getResult` uses so the two
+ * can never disagree about who won.
+ *
+ * Keyed by team COLOUR rather than by position, because that is what the team sheet, the
+ * pitch and the announcement all say, and `{ a: 3, b: 1 }` needs a lookup to mean
+ * anything to a person.
+ */
+export function shapeResult(row) {
+  if (!row || row.team_a_score == null) return null;
+  const score = { [row.team_a_color ?? 'a']: row.team_a_score };
+  if (row.team_b_color || row.team_b_score != null) {
+    score[row.team_b_color ?? 'b'] = row.team_b_score;
+  }
+  return {
+    score,
+    // Positional as well, for the two places that draw a scoreline left-to-right and
+    // do not care what the shirts were.
+    home: { color: row.team_a_color ?? null, score: row.team_a_score },
+    away: { color: row.team_b_color ?? null, score: row.team_b_score },
+    motm: row.motm_player_id
+      ? { playerId: row.motm_player_id, name: row.motm_name }
+      : null,
+  };
+}
+
+/**
+ * The viewer's own registration, as two columns on the game.
+ *
+ * `n` is the 1-based index of the bind parameter holding their player id. Null there --
+ * an anonymous visitor -- makes both columns null, which is the right answer to "am I in
+ * this game" for somebody who is not signed in.
+ */
+const VIEWER_COLUMNS = `
+  vr.status AS my_registration_status,
+  vr.waitlist_position AS my_waitlist_position
+`;
+
+const viewerJoin = (n) => `
+  LEFT JOIN registrations vr
+    ON vr.game_id = g.id
+   AND vr.player_id = $${n}::uuid
+   AND vr.status <> 'cancelled'
+`;
+
+// The current result for a game, as a correlated subquery on `games`. One join, no N+1.
+export const RESULT_COLUMNS = `
+  mr.team_a_score, mr.team_b_score,
+  rta.color AS team_a_color, rtb.color AS team_b_color,
+  motm.player_id AS motm_player_id, motm.name AS motm_name
+`;
+
+// LATERAL, not a plain join, for the award. `match_awards` is unique on
+// (game_id, award_type, player_id), so nothing at the schema level stopped two players
+// both holding man of the match for one game -- and a plain join on that would silently
+// return the SAME GAME TWICE in a list. Migration 021 now forbids it; this is written so
+// that it could not multiply rows even if it were somehow reintroduced.
+export const RESULT_JOINS = `
+  LEFT JOIN match_results mr ON mr.game_id = g.id AND mr.is_current
+  LEFT JOIN game_teams rta   ON rta.id = mr.team_a_id
+  LEFT JOIN game_teams rtb   ON rtb.id = mr.team_b_id
+  LEFT JOIN LATERAL (
+    SELECT ma.player_id, COALESCE(mp.jersey_name, mu.display_name) AS name
+      FROM match_awards ma
+      JOIN players mp ON mp.id = ma.player_id
+      JOIN users mu   ON mu.id = mp.user_id
+     WHERE ma.game_id = g.id AND ma.award_type = 'motm'
+     ORDER BY ma.created_at
+     LIMIT 1
+  ) motm ON true
 `;
 
 function shape(row) {
@@ -39,7 +120,10 @@ function shape(row) {
           name: row.venue_name,
           address: row.venue_address,
           mapsUrl: row.venue_maps_url,
-          logo_url: row.venue_logo,
+          hasLogo: !!row.venue_has_logo,
+          logoUrl: row.venue_has_logo
+            ? venueLogoPath(row.venue_id, row.venue_updated_at)
+            : null,
         }
       : null,
     kickoffAt: row.kickoff_at,
@@ -61,6 +145,14 @@ function shape(row) {
     waitlistCount: row.waitlist_count,
     spotsLeft: Math.max(0, row.capacity - row.confirmed_count),
     cancelledReason: row.cancelled_reason,
+    result: shapeResult(row),
+
+    // The viewer's own place in this game. Absent for an anonymous visitor, which is why
+    // `isRegistered` is a boolean rather than being left undefined: a card that cannot
+    // tell "not registered" from "nobody asked" renders the same either way.
+    isRegistered: row.my_registration_status != null,
+    myRegistrationStatus: row.my_registration_status ?? null,
+    myWaitlistPosition: row.my_waitlist_position ?? null,
   };
 }
 
@@ -133,21 +225,26 @@ export async function createGame({
     }
 
     const { rows: full } = await client.query(
-      `SELECT ${GAME_COLUMNS} FROM games g
+      `SELECT ${GAME_COLUMNS}, ${RESULT_COLUMNS}, ${VIEWER_COLUMNS} FROM games g
          JOIN districts d ON d.id = g.district_id
          LEFT JOIN venues v ON v.id = g.venue_id
+         ${RESULT_JOINS}
+         ${viewerJoin(2)}
         WHERE g.id = $1`,
-      [gameId]
+      [gameId, null]
     );
     return shape(full[0]);
   });
 }
 
 export async function listGames({
-  districtId, status, from, to, when, limit = 50, offset = 0, includePrivate = false,
+  districtId, status, from, to, when, limit = 50, offset = 0,
+  includePrivate = false, privateDistrictIds = null, viewerPlayerId = null,
 }) {
   const conditions = [];
-  const params = [];
+  // $1 is always the viewer's player id, so the join's placeholder is fixed and the rest
+  // of the filters number from $2. Null for an anonymous visitor.
+  const params = [viewerPlayerId];
 
   if (districtId) { params.push(districtId); conditions.push(`g.district_id = $${params.length}`); }
   if (status?.length) { params.push(status); conditions.push(`g.status = ANY($${params.length})`); }
@@ -158,14 +255,26 @@ export async function listGames({
   // "upcoming" means soonest first, "past" means most recent first.
   if (when === 'upcoming') conditions.push(`g.kickoff_at >= now() AND g.status NOT IN ('completed','cancelled')`);
   if (when === 'past') conditions.push(`(g.kickoff_at < now() OR g.status IN ('completed','cancelled'))`);
-  if (!includePrivate) conditions.push(`g.is_public AND g.status <> 'draft'`);
+  if (!includePrivate) {
+    // Public games, plus the private ones belonging to a district this caller administers.
+    if (privateDistrictIds?.length) {
+      params.push(privateDistrictIds);
+      conditions.push(
+        `((g.is_public AND g.status <> 'draft') OR g.district_id = ANY($${params.length}))`
+      );
+    } else {
+      conditions.push(`g.is_public AND g.status <> 'draft'`);
+    }
+  }
 
   params.push(limit, offset);
 
   const { rows } = await query(
-    `SELECT ${GAME_COLUMNS} FROM games g
+    `SELECT ${GAME_COLUMNS}, ${RESULT_COLUMNS}, ${VIEWER_COLUMNS} FROM games g
        JOIN districts d ON d.id = g.district_id
        LEFT JOIN venues v ON v.id = g.venue_id
+       ${RESULT_JOINS}
+       ${viewerJoin(1)}
       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
       ORDER BY g.kickoff_at ${when === 'past' ? 'DESC' : 'ASC'}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -178,21 +287,25 @@ export async function listGames({
 // `client` lets callers read on an already-open transaction. Reaching for a second
 // connection from inside a transaction deadlocks once the pool is saturated: every
 // holder waits for a connection that only another holder can release.
-async function fetchGame(where, value, client) {
+async function fetchGame(where, value, client, viewerPlayerId = null) {
   const run = client ?? { query };
   const { rows } = await run.query(
-    `SELECT ${GAME_COLUMNS} FROM games g
+    `SELECT ${GAME_COLUMNS}, ${RESULT_COLUMNS}, ${VIEWER_COLUMNS} FROM games g
        JOIN districts d ON d.id = g.district_id
        LEFT JOIN venues v ON v.id = g.venue_id
+       ${RESULT_JOINS}
+       ${viewerJoin(2)}
       WHERE ${where}`,
-    [value]
+    [value, viewerPlayerId]
   );
   if (rows.length === 0) throw new NotFoundError('Game');
   return shape(rows[0]);
 }
 
-export const getGame = (id, client) => fetchGame('g.id = $1', id, client);
-export const getGameBySlug = (slug, client) => fetchGame('g.public_slug = $1', slug, client);
+export const getGame = (id, client, viewerPlayerId = null) =>
+  fetchGame('g.id = $1', id, client, viewerPlayerId);
+export const getGameBySlug = (slug, client, viewerPlayerId = null) =>
+  fetchGame('g.public_slug = $1', slug, client, viewerPlayerId);
 
 /** The district a game belongs to. Used by the district authorisation guard. */
 export async function getGameDistrictId(gameId) {

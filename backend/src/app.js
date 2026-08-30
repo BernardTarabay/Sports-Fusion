@@ -19,6 +19,7 @@ import authRoutes from './modules/auth/routes.js';
 import gameRoutes from './modules/games/routes.js';
 import playerRoutes from './modules/players/routes.js';
 import districtRoutes from './modules/districts/routes.js';
+import venueRoutes from './modules/venues/routes.js';
 import matchdayRoutes from './modules/matchday/routes.js';
 import scheduleRoutes from './modules/schedules/routes.js';
 import awardRoutes from './modules/awards/routes.js';
@@ -136,6 +137,9 @@ export function createApp() {
   app.use('/api/games', matchdayRoutes);
   app.use('/api/players', playerRoutes);
   app.use('/api/districts', districtRoutes);
+  // Venue badges, as images. Public and cacheable -- they are drawn on the public game
+  // page, and serving them here is what keeps them out of every game JSON payload.
+  app.use('/api/venues', venueRoutes);
   app.use('/api/ratings', ratingRoutes);
   app.use('/api/rewards', rewardRoutes);
   app.use('/api/schedules', scheduleRoutes);

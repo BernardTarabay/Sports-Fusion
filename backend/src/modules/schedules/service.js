@@ -14,7 +14,7 @@
 // exactly this calculation, correct across the transition.
 
 import { withTransaction, query } from '../../database/pool.js';
-import { NotFoundError, ConflictError } from '../../lib/errors.js';
+import { NotFoundError } from '../../lib/errors.js';
 
 const num = (v) => (v == null ? null : Number(v));
 

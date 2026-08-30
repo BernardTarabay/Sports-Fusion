@@ -5,7 +5,7 @@
 // head.
 
 import { useMemo, useState } from 'react';
-import { CalendarDays, SlidersHorizontal } from 'lucide-react';
+import { CalendarDays } from 'lucide-react';
 import { useGames, useDistricts } from '../hooks/index.js';
 import { GameCard, GameCardSkeleton } from '../components/games/GameCard.jsx';
 import { Button, EmptyState, ErrorState, Segmented, Select } from '../components/ui/index.jsx';

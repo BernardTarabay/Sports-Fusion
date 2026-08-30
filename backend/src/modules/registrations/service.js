@@ -16,7 +16,7 @@
 // migration 005) so that the loser of a race gets a waitlist position and a sensible
 // message, instead of a 500 and a retry.
 
-import { withTransaction } from '../../database/pool.js';
+import { withTransaction, query } from '../../database/pool.js';
 import { publish, EventTypes } from '../../lib/events.js';
 import { NotFoundError, RegistrationErrors } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
@@ -255,8 +255,11 @@ export async function cancelRegistration({
  */
 export async function promoteNextFromWaitlist(client, gameId, actorUserId = null) {
   const { rows } = await client.query(
-    `SELECT r.id, r.player_id, r.waitlist_position
+    `SELECT r.id, r.player_id, r.waitlist_position,
+            COALESCE(p.jersey_name, u.display_name) AS name
        FROM registrations r
+       JOIN players p ON p.id = r.player_id
+       JOIN users u   ON u.id = p.user_id
       WHERE r.game_id = $1 AND r.status = 'waitlisted'
       ORDER BY r.waitlist_position ASC
       LIMIT 1`,
@@ -298,7 +301,14 @@ export async function promoteNextFromWaitlist(client, gameId, actorUserId = null
 
   logger.info({ gameId, playerId: next.player_id }, 'promoted from waitlist');
 
-  return { registrationId: next.id, playerId: next.player_id, fromPosition: next.waitlist_position };
+  // `name` is what the client tells the person who just left: "Fares has been moved off
+  // the waiting list". Without it that sentence began with the word "undefined".
+  return {
+    registrationId: next.id,
+    playerId: next.player_id,
+    name: next.name,
+    fromPosition: next.waitlist_position,
+  };
 }
 
 /** Admin: move a player up or down the waitlist. Positions stay contiguous. */
@@ -347,25 +357,32 @@ export async function reorderWaitlist({ gameId, registrationId, newPosition, act
   });
 }
 
-/** The full roster for a game: confirmed players in order, then the waitlist. */
-export async function getRoster(gameId) {
-  const { rows } = await withTransaction(async (client) =>
-    client.query(
-      `SELECT r.id, r.status, r.waitlist_position, r.registered_at, r.promoted_at,
-              r.attendance,
-              p.id AS player_id, p.jersey_name, p.preferred_position, p.is_goalkeeper,
-              p.rating_mu, p.rating_sigma,
-              u.display_name, u.avatar_url
-         FROM registrations r
-         JOIN players p ON p.id = r.player_id
-         JOIN users u   ON u.id = p.user_id
-        WHERE r.game_id = $1 AND r.status <> 'cancelled'
-        ORDER BY
-          CASE r.status WHEN 'confirmed' THEN 0 ELSE 1 END,
-          r.waitlist_position NULLS FIRST,
-          r.registered_at`,
-      [gameId]
-    )
+/**
+ * The full roster for a game: confirmed players in order, then the waitlist.
+ *
+ * A plain read. It used to open a transaction around this single SELECT, which is a
+ * BEGIN and a COMMIT of pure round-trip latency on an endpoint the public game page and
+ * the matchday screen both hit. `client` is accepted so a caller who already holds a
+ * transaction reads on it rather than reaching into the pool for a second connection --
+ * the deadlock the rest of this codebase is careful about.
+ */
+export async function getRoster(gameId, client) {
+  const run = client ?? { query };
+  const { rows } = await run.query(
+    `SELECT r.id, r.status, r.waitlist_position, r.registered_at, r.promoted_at,
+            r.attendance,
+            p.id AS player_id, p.jersey_name, p.preferred_position, p.is_goalkeeper,
+            p.rating_mu, p.rating_sigma,
+            u.display_name, u.avatar_url
+       FROM registrations r
+       JOIN players p ON p.id = r.player_id
+       JOIN users u   ON u.id = p.user_id
+      WHERE r.game_id = $1 AND r.status <> 'cancelled'
+      ORDER BY
+        CASE r.status WHEN 'confirmed' THEN 0 ELSE 1 END,
+        r.waitlist_position NULLS FIRST,
+        r.registered_at`,
+    [gameId]
   );
 
   return {

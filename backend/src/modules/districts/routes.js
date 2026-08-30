@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../../database/pool.js';
+import * as districts from './service.js';
 import { validate, asyncHandler } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRoles, requireAdmin, requireDistrictAccess } from '../../middleware/authorize.js';
@@ -14,21 +15,31 @@ import { NotFoundError } from '../../lib/errors.js';
 const router = Router();
 const uuid = z.string().uuid();
 
+// A slug, or a uuid. `/districts/keserwan` and `/districts/<id>` both have to resolve,
+// because the links into this page are slugs and the references held elsewhere are ids.
+const idOrSlug = z.string().trim().min(2).max(60).regex(/^[a-z0-9-]+$/i, 'Not a district');
+
 router.get(
   '/',
   asyncHandler(async (_req, res) => {
-    const { rows } = await query(
-      `SELECT d.id, d.slug, d.name, d.name_ar, d.region,
-              (SELECT count(*)::int FROM district_followers f WHERE f.district_id = d.id) AS followers,
-              (SELECT count(*)::int FROM games g
-                WHERE g.district_id = d.id
-                  AND g.status IN ('registration_open','full','teams_generated')
-                  AND g.kickoff_at > now()) AS upcoming_games
-         FROM districts d
-        WHERE d.is_active
-        ORDER BY d.name`
-    );
-    res.json({ districts: rows });
+    // Both in one response. The landing page renders the platform band and the district
+    // rail together, and splitting them into two round trips only makes the front door
+    // slower for no gain.
+    const [list, platform] = await Promise.all([
+      districts.listDistricts(),
+      districts.getPlatformStats(),
+    ]);
+    res.json({ districts: list, platform });
+  })
+);
+
+// One district. Public: the whole point of a share link is that it works for somebody
+// who has never signed in.
+router.get(
+  '/:idOrSlug',
+  validate({ params: z.object({ idOrSlug }) }),
+  asyncHandler(async (req, res) => {
+    res.json(await districts.getDistrict(req.params.idOrSlug));
   })
 );
 
@@ -36,12 +47,7 @@ router.get(
   '/:id/venues',
   validate({ params: z.object({ id: uuid }) }),
   asyncHandler(async (req, res) => {
-    const { rows } = await query(
-      `SELECT id, name, address, google_maps_url, pitch_type, default_capacity, logo_url
-         FROM venues WHERE district_id = $1 AND is_active ORDER BY name`,
-      [req.params.id]
-    );
-    res.json({ venues: rows });
+    res.json({ venues: await districts.listVenues(req.params.id) });
   })
 );
 
@@ -78,12 +84,15 @@ router.post(
                            default_capacity, hourly_cost, currency, contact_name,
                            contact_phone, notes, logo_url)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       RETURNING id, name, address, google_maps_url, pitch_type, default_capacity, logo_url`,
+       RETURNING id`,
       [req.params.id, b.name, b.address ?? null, b.googleMapsUrl ?? null, b.pitchType ?? null,
        b.defaultCapacity ?? null, b.hourlyCost ?? null, b.currency, b.contactName ?? null,
        b.contactPhone ?? null, b.notes ?? null, b.logoUrl ?? null]
     );
-    res.status(201).json({ venue: rows[0] });
+    // Re-read through the same projection the list uses, so a venue never arrives at the
+    // client in one shape from a create and another from a refetch.
+    const venues = await districts.listVenues(req.params.id);
+    res.status(201).json({ venue: venues.find((v) => v.id === rows[0].id) });
   })
 );
 
@@ -139,7 +148,7 @@ router.patch(
   requireDistrictAccess((req) => req.params.id),
   asyncHandler(async (req, res) => {
     const b = req.body;
-    const { rows } = await query(
+    const { rowCount } = await query(
       `UPDATE venues SET
          name              = COALESCE($3, name),
          address           = COALESCE($4, address),
@@ -149,8 +158,7 @@ router.patch(
          -- Distinguishes "not mentioned" from "remove it": COALESCE cannot, because both
          -- arrive as null. The flag is only true when the key was actually present.
          logo_url          = CASE WHEN $9::boolean THEN $8 ELSE logo_url END
-       WHERE id = $2 AND district_id = $1
-       RETURNING id, name, address, google_maps_url, pitch_type, default_capacity, logo_url`,
+       WHERE id = $2 AND district_id = $1`,
       [
         req.params.id, req.params.venueId,
         b.name ?? null, b.address ?? null, b.googleMapsUrl ?? null,
@@ -158,8 +166,9 @@ router.patch(
         b.logoUrl ?? null, Object.hasOwn(b, 'logoUrl'),
       ]
     );
-    if (!rows[0]) throw new NotFoundError('Venue');
-    res.json({ venue: rows[0] });
+    if (!rowCount) throw new NotFoundError('Venue');
+    const venues = await districts.listVenues(req.params.id);
+    res.json({ venue: venues.find((v) => v.id === req.params.venueId) });
   })
 );
 

@@ -18,7 +18,7 @@
     "announcements": "node scripts/preview-announcements.js",
     "seed": "node scripts/seed.js",
     "dev": "npm run dev --workspace=backend",
-    "test": "node --test backend/src/modules/teams/balancer.test.js backend/src/modules/ratings/glicko2.test.js backend/src/api.test.js backend/src/worker.test.js backend/src/results.test.js backend/src/ratings.test.js backend/src/rewards.test.js backend/src/authorization.test.js && node scripts/verify-schema.js",
+    "test": "node --test backend/src/modules/teams/balancer.test.js backend/src/modules/ratings/glicko2.test.js backend/src/api.test.js backend/src/worker.test.js backend/src/results.test.js backend/src/ratings.test.js backend/src/rewards.test.js backend/src/authorization.test.js backend/src/district-authorization.test.js backend/src/projections.test.js backend/src/otp-exposure.test.js backend/src/matchday-control.test.js && node scripts/verify-schema.js",
     "test:unit": "node --test backend/src/modules/teams/balancer.test.js",
     "test:api": "node --test backend/src/api.test.js",
     "test:concurrency": "node --test backend/src/modules/registrations/concurrency.test.js",
@@ -31,7 +31,10 @@
     "db:dev": "node scripts/dev-db.js",
     "db:dev:reset": "node scripts/dev-db.js --reset",
     "setup": "npm run migrate && npm run seed",
-    "test:authz": "node --test backend/src/authorization.test.js"
+    "test:authz": "node --test backend/src/authorization.test.js backend/src/district-authorization.test.js",
+    "test:shapes": "node --test backend/src/projections.test.js",
+    "test:security": "node --test backend/src/otp-exposure.test.js backend/src/authorization.test.js backend/src/district-authorization.test.js",
+    "test:matchday": "node --test backend/src/matchday-control.test.js"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

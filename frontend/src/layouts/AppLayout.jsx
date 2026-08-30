@@ -1,4 +1,9 @@
-// Application shell.
+// The PLAYER app's shell.
+//
+// Nothing about running a league appears here. Administration is a separate application
+// at /admin with its own shell, so this one no longer has to carry a mode toggle or
+// explain which half of the product you are looking at. The only trace of it is one line
+// in the account menu, for the admins who also turn out on Saturday.
 //
 // Two navigations, one for each way this product is used:
 //
@@ -10,7 +15,7 @@
 // The bottom bar is not a shrunken top bar; the two have different contents because the
 // jobs are different.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Link, useLocation, Outlet } from 'react-router';
 import {
   Home, CalendarDays, Trophy, Gift, User, MapPin, Sun, Moon, Monitor, LogOut,
@@ -18,9 +23,11 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { useSession } from '../state/session.jsx';
+import { useScrollLock } from '../hooks/index.js';
 import { useTheme } from '../state/theme.jsx';
 import { Avatar, Button } from '../components/ui/index.jsx';
 import { Logo } from '../components/shared/Logo.jsx';
+import { SocialRow, SocialList } from '../components/shared/Social.jsx';
 
 // What a player is for: find a game, play in it, see where they stand.
 //
@@ -33,7 +40,7 @@ import { Logo } from '../components/shared/Logo.jsx';
 // Districts and Rewards are built and routed, just not in the navigation. Add a line here
 // to bring either back.
 const PRIMARY_NAV = [
-  { to: '/matchday', label: 'Matchday', icon: Goal, authOnly: true },
+  { to: '/my-game', label: 'My game', icon: Goal, authOnly: true },
   { to: '/games', label: 'Games', icon: CalendarDays },
   { to: '/leaderboards', label: 'Rankings', icon: Trophy },
 ];
@@ -88,16 +95,22 @@ function DesktopNav() {
 
         <div className="flex-1" />
 
-        {isAdmin && (
-          <Button to="/admin" variant="ghost" size="sm">
-            <Shield className="size-4" /> Admin
-          </Button>
-        )}
+        <SocialRow className="mr-1" size="sm" />
 
         <ThemeToggle />
 
         {isAuthenticated ? (
           <div className="flex items-center gap-2">
+            {/* An admin who also plays. Quiet, because switching applications is not
+                something a player does, and this shell belongs to the player. */}
+            {isAdmin && (
+              <Link
+                to="/admin"
+                className="flex h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-sm text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] hover:text-[var(--fg-primary)]"
+              >
+                <Shield className="size-4" /> Operations
+              </Link>
+            )}
             <Link to="/profile" className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 hover:bg-[var(--bg-sunken)]">
               <Avatar name={user?.displayName} size="sm" />
               <span className="max-w-32 truncate text-sm font-medium">{user?.displayName}</span>
@@ -121,6 +134,50 @@ function MobileHeader() {
   const [open, setOpen] = useState(false);
   const { isAuthenticated, isAdmin, user, logout } = useSession();
   const location = useLocation();
+  const sheetRef = useRef(null);
+  const openerRef = useRef(null);
+
+  // Close on navigation. Tapping a link inside the sheet already calls setOpen(false),
+  // but the browser back button does not, and the sheet would still be there over the
+  // page it navigated to.
+  useEffect(() => { setOpen(false); }, [location.pathname]);
+
+  useScrollLock(open);
+
+  // Move focus into the sheet when it opens, and put it back on the button that opened
+  // it when it closes -- otherwise a keyboard user's focus is left on an element that
+  // is now behind a modal.
+  useEffect(() => {
+    if (!open) return undefined;
+    const first = sheetRef.current?.querySelector('a, button');
+    first?.focus();
+    return () => openerRef.current?.focus();
+  }, [open]);
+
+  /** Escape closes; Tab cycles inside. */
+  const onSheetKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      setOpen(false);
+      return;
+    }
+    if (event.key !== 'Tab') return;
+
+    const focusable = sheetRef.current?.querySelectorAll(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusable?.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   return (
     <>
@@ -133,9 +190,12 @@ function MobileHeader() {
           <ThemeToggle className="size-9 pointer-coarse:size-11" />
           {isAuthenticated ? (
             <button
+              ref={openerRef}
               onClick={() => setOpen(true)}
               className="grid min-h-11 min-w-11 place-items-center rounded-full"
               aria-label="Open menu"
+              aria-haspopup="dialog"
+              aria-expanded={open}
             >
               <Avatar name={user?.displayName} size="sm" />
             </button>
@@ -145,9 +205,21 @@ function MobileHeader() {
         </div>
       </header>
 
-      {/* Account sheet. Everything that does not deserve a slot in the bottom bar. */}
+      {/* Account sheet. Everything that does not deserve a slot in the bottom bar.
+
+          It was a bare div with aria-modal on it: Escape did nothing, focus stayed
+          behind it on the avatar button, and the page underneath scrolled while the
+          sheet sat still. aria-modal="true" is a promise to a screen reader that the
+          rest of the page is inert, and it was not true. */}
       {open && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Account menu">
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Account menu"
+          ref={sheetRef}
+          onKeyDown={onSheetKeyDown}
+        >
           <button
             className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
             onClick={() => setOpen(false)}
@@ -169,10 +241,18 @@ function MobileHeader() {
             <nav className="space-y-1">
               <SheetLink to="/profile" icon={User} label="My profile" onNavigate={() => setOpen(false)} />
               <SheetLink to="/rewards" icon={Gift} label="Rewards" onNavigate={() => setOpen(false)} />
+              <SheetLink to="/districts" icon={MapPin} label="Districts" onNavigate={() => setOpen(false)} />
               {isAdmin && (
-                <SheetLink to="/admin" icon={Shield} label="Admin" onNavigate={() => setOpen(false)} />
+                <SheetLink to="/admin" icon={Shield} label="Operations" onNavigate={() => setOpen(false)} />
               )}
             </nav>
+
+            {/* The footer is desktop-only, so without this a phone never sees the store
+                or the community group at all -- and the phone is the primary device. */}
+            <div className="mt-4 border-t border-[var(--border-subtle)] pt-3">
+              <p className="eyebrow mb-1 px-3 text-[0.625rem]">Sports Fusion elsewhere</p>
+              <SocialList onNavigate={() => setOpen(false)} />
+            </div>
 
             <Button
               variant="secondary"
@@ -204,11 +284,11 @@ function SheetLink({ to, icon: Icon, label, onNavigate }) {
 function BottomNav() {
   const { isAuthenticated } = useSession();
 
-  // Matchday sits second: after home, the next thing a player wants is their game. It is
-  // dropped when signed out, because there is no "your game" without a you.
+  // Your game sits second: after home, the next thing a player wants is the fixture they
+  // are in. It is dropped when signed out, because there is no "your game" without a you.
   const items = [
     { to: '/', label: 'Home', icon: Home, end: true },
-    ...(isAuthenticated ? [{ to: '/matchday', label: 'Matchday', icon: Goal }] : []),
+    ...(isAuthenticated ? [{ to: '/my-game', label: 'My game', icon: Goal }] : []),
     { to: '/games', label: 'Games', icon: CalendarDays },
     { to: '/leaderboards', label: 'Rankings', icon: Trophy },
     isAuthenticated
@@ -288,6 +368,7 @@ function Footer() {
         <Link to="/districts" className="hover:text-[var(--fg-primary)]">Districts</Link>
         <Link to="/games" className="hover:text-[var(--fg-primary)]">Games</Link>
         <Link to="/leaderboards" className="hover:text-[var(--fg-primary)]">Rankings</Link>
+        <SocialRow className="-my-1" size="sm" />
       </div>
     </footer>
   );

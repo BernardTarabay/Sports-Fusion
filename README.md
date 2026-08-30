@@ -266,11 +266,13 @@ All routes are under `/api`. Auth uses httpOnly cookies (`sf_access`, `sf_refres
 |---|---|---|
 | `POST` | `/auth/signup` · `/auth/login` · `/auth/refresh` · `/auth/logout` | public |
 | `GET` | `/auth/me` | signed in |
-| `GET` | `/districts` · `/districts/:id/venues` | public |
+| `GET` | `/districts` · `/districts/:idOrSlug` · `/districts/:id/venues` | public |
+| `GET` | `/venues/:id/logo` | public, cacheable |
 | `POST`/`DELETE` | `/districts/:id/follow` | signed in |
 | `GET` | `/games` · `/games/:id` · `/games/slug/:slug` | public |
 | `POST` | `/games/:id/join` · `/games/:id/leave` | signed in |
-| `GET`/`PATCH` | `/players/me` | signed in |
+| `GET`/`PATCH` | `/players/me` · `GET /players/:id` | signed in |
+| `GET` | `/ratings/leaderboard?metric=…` | public |
 | `PUT`/`DELETE` | `/players/me/relationships` | signed in |
 | `POST` | `/games` · `/games/:id/open` · `/games/:id/cancel` | admin |
 | `POST` | `/games/:id/teams/generate` · `/games/:id/teams/override` | admin |
@@ -279,7 +281,16 @@ All routes are under `/api`. Auth uses httpOnly cookies (`sf_access`, `sf_refres
 | `PUT` | `/players/:id/rating` | admin |
 
 Admin routes are district-scoped: a `district_admin` for Beirut cannot touch a Keserwan
-game. `admin` and `owner` are global.
+game, a player who belongs to Keserwan, a Keserwan invite link, or Keserwan's audit trail.
+`admin` and `owner` are global. `backend/src/district-authorization.test.js` asserts each
+of those boundaries in both directions — the refusal, and that the district's own admin
+still gets through, because a guard that refuses everybody passes every refusal test.
+
+Every response shape the app renders from is pinned by
+`backend/src/projections.test.js`. Those are contract tests rather than behaviour tests,
+and they exist because the failure they catch is silent: React renders an absent key as
+nothing, so an entire feature can be dead in production while every endpoint answers 200
+and every other test passes.
 
 Errors carry a stable machine code (`GAME_FULL`, `ALREADY_REGISTERED`,
 `TOKEN_REUSE_DETECTED`, ...) so the frontend branches on the code, not on English prose a
@@ -543,9 +554,30 @@ way as everyone else, and the roles still come from the database, never from the
 
 The code arrives through the WhatsApp Business API directly rather than through the worker
 queue. Every other message in the system is queued, and should be. A login code cannot
-wait for a tick: somebody is holding a phone looking at an empty six-box input. With
-`WHATSAPP_ENABLED=false` the code goes to the log and comes back in the response, so local
-development needs no WhatsApp account.
+wait for a tick: somebody is holding a phone looking at an empty six-box input.
+
+### The code never leaves the server outside development
+
+With no provider configured, the code goes to the server log and comes back in the
+response, so local development needs no WhatsApp account. **That is an authentication
+bypass anywhere else**, and `OTP_PROVIDER` defaults to `log` — which means it was not a
+misconfiguration you had to make, it was the state a deploy is in until somebody sets
+WhatsApp up. Anyone who knew a number, and this community's numbers are all in one group,
+could ask `/auth/phone/start` for its login code and be handed it. Including the owner's.
+
+So the gate is on `NODE_ENV`, not on the provider:
+
+| | `devCode` in the response | code written to the log | `/auth/phone/start` |
+|---|---|---|---|
+| development / test, no provider | yes | yes | issues a code |
+| production, no provider | **no** | **no** | `503 OTP_UNAVAILABLE` |
+| any environment, provider set | no | no | sends it |
+
+Refusing outright rather than issuing a code nobody can receive is the honest answer: a
+challenge row, a spent rate-limit slot and a cheerful "check your phone" for a message
+that will never arrive is worse than being told the door is shut. Email and password
+sign-in still works, so the league is reachable either way, and the process prints a loud
+warning at boot. `backend/src/otp-exposure.test.js` asserts every combination.
 
 ---
 
@@ -686,12 +718,84 @@ audit trail keeps what was destroyed. It is the only record that survives.
 
 ---
 
+## Two applications
+
+Not two views of one. `/` is the **player app** and `/admin` is the **admin app**, and
+they share components, a session and an API but not a shell, a navigation or a screen.
+
+It used to be one app with a mode toggle in the header, and both audiences were worse off
+for it. The player was sent to the admin's matchday workspace with the controls hidden —
+a thousand-line operations console with a fixture rail, a payment summary, a formation
+picker, a waitlist manager, an undo stack and an export button, and after hiding
+everything a player may not touch, what was left was a page organised around jobs that
+are not theirs. Meanwhile the admin's own workspace had to keep apologising for the
+audience it might have.
+
+| | Player app | Admin app |
+|---|---|---|
+| Home | Tonight's fixture, then games you can join | The pitch, for the game happening next |
+| Destinations | Home · My game · Games · Rankings · Me | Operations · Schedule · Games · Players · Invites · Venues · Analytics |
+| The game screen | `/my-game`: when, where, am I in, who am I with, what was the score | the full workspace: clock, roster, goals, assists, ratings, payments, MOTM, formation |
+
+`/my-game` answers a player's four questions in that order and stops. No tabs, no rail,
+nothing to configure.
+
+The admin app is **self-sufficient** — everything needed to run a match is in it, so
+there is no "player view" button in the header any more. An admin who also plays reaches
+the player app from their account menu, because that is a destination rather than a mode.
+
+---
+
 ## Matchday
 
 What an admin touches while standing at the side of a pitch. `POST /api/games/:id/…` —
-clock, payments, attendance, stats, formation, motm, roster — every one of them admin-only
-and district-scoped, and every one returning the *complete* matchday state rather than the
-field it changed. That costs one extra query and removes a class of bug: the pitch cannot
+clock, payments, attendance, stats, formation, motm, roster, team lock — every one of them
+admin-only and district-scoped, and every one returning the *complete* matchday state
+rather than the field it changed.
+
+### The tactical board stores positions
+
+Dragging a player onto a position used to change nothing on the server. `applyOverride`
+opened with `if (rows[0].team_id === move.toTeamId) continue`, so a move within your own
+team was a no-op, and `team_players` recorded *which team* somebody was on and nothing
+about *where* — the pitch inferred a slot from the player's index in an array that came
+back ordered by `assigned_position`, alphabetically. An arrangement survived until the
+next refetch and then reverted.
+
+`team_players.slot_index` is that missing fact. It is nullable, and the null is what makes
+an **empty position a real destination**: with a dense array, slot 7 only exists once
+seven players do, so a squad of five could not spread out across the pitch and a gap could
+only ever be filled by swapping with somebody already standing there. Now a player can be
+dropped anywhere, and whoever was there takes the vacated spot.
+
+A same-team move is **not** flagged as a manual override. That flag is the training signal
+for inferred relationships, the whole sheet is sent on every arrangement, and moving
+somebody five yards within their own side says nothing about who they want to play with.
+
+### The lock is a choice, and the clock has a way back
+
+`lockedTeams` was `status IN ('in_progress','completed')` and the Lock button posted a
+flag to an endpoint that ignores it. So the board went read-only the moment a match kicked
+off — precisely when somebody turns an ankle and has to come off — and the unlock button
+could not bring it back. It is now `games.teams_locked`, defaulting to off, and the admin
+sets it.
+
+`clock: reset` is the only transition that goes backwards. Every other one is a one-way
+door on a phone in the dark: tapping "End" at half time finished the match, completed the
+game, and left nowhere to go. Reset rewinds the clock and nothing else — the goals, the
+payments, the attendance and the roster all stay, and a game an admin *deliberately*
+cancelled stays cancelled.
+
+### The match rating
+
+The player panel has always had a 1-10 slider. `rating` was not in the endpoint's schema,
+and `validate` strips unknown keys *before* the "nothing to change" refinement runs, so
+every drag answered 422 and no number was ever stored. It now writes
+`player_match_stats.match_rating`.
+
+Deliberately not the Glicko rating: that one is derived from results and recomputed from
+the ledger on every replay, so a human number written into it would be silently erased.
+This is an opinion about one performance, and the rating engine does not read it. That costs one extra query and removes a class of bug: the pitch cannot
 show a player as paid while the payment rail still says unpaid, because both read the same
 response. It also halves the round trips on one bar of signal, which is the real operating
 environment.
@@ -770,6 +874,20 @@ a venue is deleted. The cost is a wide column, which the upload path keeps small
 is downscaled to 256px in the browser before encoding, turning a 3MB phone export into
 about 11KB. PNG rather than JPEG, because these are logos on flat colour — JPEG drops the
 alpha channel and rings around lettering.
+
+**Stored inline; served as a URL.** The badge is not in the game JSON. It used to be, and
+it was the most expensive thing in the API: a badge repeats on every game in every list,
+and a four-fixture response measured 238 KB for what is 2 KB of actual fixture data. The
+schema permits 400 KB per badge and the list endpoint returns up to a hundred games.
+
+So `GET /api/venues/:id/logo` decodes the data URI and serves the bytes, with an ETag over
+the content and a day of `Cache-Control`. The game JSON carries `venue.logoUrl` — a path
+whose query string is the venue row's `updated_at`, so replacing a badge changes the URL
+and the old one falls out of every cache. That same four-fixture response is now 3 KB.
+
+The canvas constraint survives intact, which is the whole point: `/api/venues/…` is a
+relative path, both deployments serve `/api` from the web origin, so the image is
+same-origin, the canvas is not tainted, and the export still produces a PNG.
 
 SVGs are passed through unrasterised, but scanned first: an inline `<svg>` becomes part of
 our own document in the export, so a `<script>` or a remote `xlink:href` inside one would
@@ -971,16 +1089,18 @@ until then the cap is honest, documented in `expirePoints()`, and tested.
 
 ## Status
 
-**Done and verified — 176 tests + 24 schema guarantees, all passing**
+**Done and verified — 224 tests + 33 schema guarantees, all passing**
 
 ```bash
 npm test
 ```
 
-- 20 migrations, 41 tables
+- 23 migrations, 41 tables
+- Two applications: a five-destination player app, and an operations console for admins
 - Nothing in the app is mocked: every screen reads the database
 - Match clock, payment freeze, post-match settlement, and PNG export to WhatsApp
-- Authorisation proven by table: 38 admin routes, refused to players and to anonymous
+- Authorisation proven by table: 38 admin routes, refused to players and to anonymous — and every district boundary asserted in both directions
+- API response shapes pinned by contract tests, because a shape mismatch fails silently
 - Phone sign-in over WhatsApp, and QR invites that let a community add itself
 - Matchday operations: the clock, payments, live goals, attendance, formation, MOTM
 - Glicko-2 rating engine, verified against the specification's worked example
@@ -992,7 +1112,7 @@ npm test
 The economy is closed: **play → earn → redeem → Shopify**, with the liability visible at
 every step.
 
-**Six real bugs the tests caught**
+**Real bugs the tests caught**
 
 | Bug | Consequence had it shipped |
 |---|---|
@@ -1010,6 +1130,25 @@ every step.
 | `ON CONFLICT DO NOTHING` on a table with nothing to conflict on | Venues had no unique constraint, so the clause was silently a no-op and running the seed twice produced two of every pitch. An admin picking from a list with the same name in it twice cannot tell which one their old games hang off. Fixed with the unique index that should have existed (district plus normalised name), and a migration that folds duplicates into the oldest row — repointing games and schedules first, because both columns are `ON DELETE SET NULL` and would have orphaned them silently. |
 | A data URI inside a Tailwind arbitrary value | The select's chevron was `bg-[url("data:image/svg+xml,%3Csvg xmlns=...")]`, and a data URI contains literal spaces. A `class` attribute is split on whitespace, so the browser tore that one class into fragments and took the neighbouring `bg-[var(--bg-surface)]` with it. The control ended up with **no background and no arrow**, and its options inherited near-white text onto nothing — which is why venue names were there but unreadable. Moved to a real CSS class, where a URI can be percent-encoded and `option` can be styled at all. |
 | `Segmented` read `option.key`; two call sites passed `option.value` | It fell back to the whole option object and handed that to `onChange`, so the state became `{value, label}` — matching neither branch. No throw, no warning, and the control looked dead: the login page's Phone/Password toggle could switch to Password and never back. Fixed in the component (`option.value ?? option.key ?? option`) rather than at the call sites, because the trap is the component silently accepting one shape of two reasonable ones. |
+| `OTP_PROVIDER` defaults to `log`, and `log` returns the code | Total account takeover, in the configuration that actually deploys. `render.yaml` sets `WHATSAPP_ENABLED=false` and nothing else, which selects `log` — so `POST /auth/phone/start` handed the six-digit login code back in the response to whoever asked, for any number. Everyone’s number is in the same WhatsApp group. The comment above it argued this was safe *because* no provider was configured, which is the exact condition a half-configured deploy is in. |
+| `game.result` was a shape only the retired mock produced | **No match score was displayed anywhere in the app.** Not on a fixture card, not on the game page, not in match of the week, not on a player’s history, not on the admin summary, and not on the matchday scoreboard — which sat on 0 – 0 for a whole match while goals were being recorded three inches below it. Every endpoint answered 200; React renders an absent key as nothing, so nothing failed. |
+| The score steppers called a service method that rejects by design | The server folds the score out of goal events deliberately, so `setScore` was written to reject. Nothing caught the rejection: tapping + produced `Uncaught (in promise)` in the console and no visible response at all. Replaced with a scorer picker, which is what recording a goal has always meant here. |
+| `GET /api/districts/:slug` did not exist | Every district card on the site, and every region on the map, led to "District not found". |
+| `district.players * 32` over a key the API never sent | `undefined * 32` is `NaN`, so the front page rendered the literal text "NAN" under every district. The `* 32` was mock fudge that turned an invented follower count into a plausible-looking population. |
+| `metric` was not in the leaderboard’s query schema | `validate` REPLACES `req.query` with what it parsed, so an unlisted key is not ignored — it is deleted. Six of the seven leaderboard tabs silently rendered the same rating table. |
+| The podium took the top three; the list started at index three | A board with one or two names on it rendered **nothing at all** — and not the empty state either, because it was not empty. The Man of the Match board, which has exactly one name on it for most of a season, was invisible for that entire time. |
+| Filing a result deleted the man of the match | `applyAwards` defaulted `awards` to `[]` and then unconditionally `DELETE`d, so the ordinary workflow — award it at the final whistle, file the result — erased it silently. Found by a test written for something else. |
+| Career goals read `player_match_stats`, which nothing writes | Goals are tapped in on the matchday screen and land in `match_events`. Every profile, and the Man of the Month card, showed 0 goals beside players who had scored all season. |
+| Four admin routes stopped at `requireAdmin` | `requireAdmin` admits a `district_admin`. So Metn’s admin could rewrite any player’s rating league-wide, deactivate them, read the entire cross-district audit trail, and revoke another district’s invite links. The authorisation suite was thorough along the player-vs-admin axis and had nothing on the district axis — which is where the holes were. |
+| Venue badges inlined into every game in every list | 238 KB for four fixtures, uncacheable, on the Beirut mobile connections this app is written for. The schema permits 400 KB per badge and the list endpoint returns up to a hundred games. |
+| `isRegistered` was never returned by the games list | The "You’re in" badge never appeared and the Games page’s "Mine" tab was permanently empty — for every player, on every game they had actually joined. |
+| `node --watch` leaked a database connection per restart | `shutdown()` closed the pool only inside `server.close()`’s callback, which does not fire while a browser holds a keep-alive socket — so the ten-second timer won and called `process.exit()` without closing anything. Against PGlite a dropped socket keeps its slot, so about ten edits in, every request failed with "Connection terminated unexpectedly" and nothing said why. |
+| The test harness picked its database port at random and never checked | `node --test` runs suites in parallel processes and each boots its own harness, so `5000 + random(2000)` is a birthday problem. With a handful of suites the collision was rare enough to look like it worked; adding three more made the whole run fail about one time in four — every test in the losing suite, with an error nowhere near the cause. A flaky suite is worse than a missing one, because people learn to re-run it and then re-run it over a real failure too. |
+| A drag onto an empty position did nothing | `team_players` stored which TEAM somebody was on and nothing about WHERE, so the pitch inferred a slot from an array ordered by `assigned_position` — alphabetically. `applyOverride` then opened with `if (rows[0].team_id === move.toTeamId) continue`, making a same-team move a no-op. An arrangement survived until the next refetch. And with a dense array, slot 7 only exists once seven players do, so a squad of five could not spread out at all. |
+| The Lock/Unlock button on the matchday screen did nothing | It posted `{ locked }` to an endpoint that ignores it, and `lockedTeams` was computed as `status IN ('in_progress','completed')`. So the team sheet went read-only the moment a match kicked off — exactly when somebody turns an ankle — and the unlock button could not bring it back. |
+| The 1-10 match rating slider answered 422 every time | `rating` was not in the endpoint's schema, and `validate` strips unknown keys BEFORE the "nothing to change" refinement runs, so the body arrived empty and was rejected as such. Nobody's opinion of a performance was ever stored. |
+| The clock was a set of one-way doors | Tapping "End" at half time finished the match, set the game to completed, and left no way to carry on. On a phone, in the dark, at the side of a pitch. |
+| The fixture rail widened the whole page on a phone | `flex-1` without `min-w-0`: a flex item defaults to `min-width: auto` and refuses to shrink below its contents, so the rail's own `overflow-x: auto` never engaged and the PAGE scrolled sideways instead — clipping the game's heading off the left edge. The row of four thumb-sized action buttons did the same with `shrink-0`. |
 
 **Written, gated on a real Postgres**
 

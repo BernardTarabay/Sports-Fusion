@@ -93,7 +93,13 @@ router.post(
   validate({
     params: idParam,
     body: z.object({
-      action: z.enum(['start', 'halftime', 'resume', 'end', 'abandon', 'pause', 'unpause']),
+      action: z.enum([
+        'start', 'halftime', 'resume', 'end', 'abandon', 'pause', 'unpause',
+        // Puts a finished or abandoned match back to not-started. An admin who taps
+        // "End" at half time currently has a completed game and no way back, which is
+        // a harsh outcome for a mis-tap on a phone in the dark.
+        'reset',
+      ]),
     }),
   }),
   requireDistrictAccess(gameDistrict),
@@ -142,6 +148,11 @@ router.patch(
       attendance: attendanceStatus.nullable().optional(),
       goals: z.number().int().min(0).max(30).optional(),
       assists: z.number().int().min(0).max(30).optional(),
+      // The 1-10 slider on the player panel. It has always been there and this schema
+      // has never mentioned it -- and validate() strips unknown keys BEFORE the
+      // "nothing to change" refinement runs, so every drag answered 422 and no rating
+      // was ever stored. Not the Glicko rating: that one is derived and replayed.
+      rating: z.number().min(1).max(10).nullable().optional(),
     }).refine((v) => Object.keys(v).length > 0, 'Nothing to change'),
   }),
   requireDistrictAccess(gameDistrict),
@@ -198,6 +209,22 @@ router.post(
       gameId: req.params.id, formation: req.body.formation, actorUserId: req.user.id,
     });
     res.json({ game });
+  })
+);
+
+// Guarding the team sheet is a deliberate act, so it has its own route rather than
+// riding along on a status change that discarded it.
+router.post(
+  '/:id/teams/lock',
+  ...guard,
+  validate({ params: idParam, body: z.object({ locked: z.boolean() }) }),
+  requireDistrictAccess(gameDistrict),
+  asyncHandler(async (req, res) => {
+    res.json({
+      game: await matchday.setTeamsLocked({
+        gameId: req.params.id, locked: req.body.locked, actorUserId: req.user.id,
+      }),
+    });
   })
 );
 

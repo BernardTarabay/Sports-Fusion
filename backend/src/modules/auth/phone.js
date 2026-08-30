@@ -12,8 +12,11 @@
 
 import { randomInt, createHash } from 'node:crypto';
 import { withTransaction } from '../../database/pool.js';
-import { UnauthorizedError, ConflictError, ValidationError, RateLimitError } from '../../lib/errors.js';
+import {
+  UnauthorizedError, ConflictError, ValidationError, RateLimitError, ServiceUnavailableError,
+} from '../../lib/errors.js';
 import { sendLoginCode } from '../../integrations/otp/index.js';
+import config from '../../config/index.js';
 import { issueSession, publicUser, loadRoles } from './service.js';
 
 const CODE_TTL_MINUTES = 10;
@@ -32,6 +35,20 @@ const newCode = () => String(randomInt(0, 1_000_000)).padStart(6, '0');
  * learn who is registered, which is the whole point.
  */
 export async function startChallenge({ phone, purpose = 'login', context = {} }) {
+  // Say so before spending anything.
+  //
+  // With no provider there is nowhere for the code to go, and the honest answer is "this
+  // is switched off" rather than a challenge row, a rate-limit slot and a cheerful
+  // "check your phone" for a message that will never arrive. Outside production the
+  // code comes back in the response, so this is only ever reached on a real deploy that
+  // was never given WhatsApp or Twilio credentials.
+  if (!config.otp.canDeliver && !config.otp.exposeCode) {
+    throw new ServiceUnavailableError(
+      'Signing in by phone is unavailable at the moment. Try again shortly.',
+      'OTP_UNAVAILABLE'
+    );
+  }
+
   return withTransaction(async (client) => {
     // Per-number throttle, separate from the per-IP limiter on the route. One stops a
     // single attacker spraying many numbers; this stops many attackers, or one behind a
@@ -68,8 +85,10 @@ export async function startChallenge({ phone, purpose = 'login', context = {} })
       expiresAt,
       expiresInSeconds: CODE_TTL_MINUTES * 60,
       delivered: sent.delivered,
-      // Only ever present when the WhatsApp integration is switched off.
-      devCode: sent.devCode,
+      // Belt and braces. sendLoginCode already withholds this outside development; the
+      // second gate is here because this is the object that goes on the wire, and a
+      // future provider returning a devCode by accident must not be able to leak one.
+      ...(config.otp.exposeCode && sent.devCode ? { devCode: sent.devCode } : {}),
     };
   });
 }

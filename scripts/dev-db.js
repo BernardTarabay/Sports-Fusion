@@ -45,8 +45,28 @@ async function main() {
     console.log('  wiped ' + path.relative(root, DATA_DIR));
   }
 
-  const db = new PGlite(DATA_DIR, { extensions: { citext } });
-  await db.waitReady;
+  let db;
+  try {
+    db = new PGlite(DATA_DIR, { extensions: { citext } });
+    await db.waitReady;
+  } catch (err) {
+    // PGlite aborts on a data directory it cannot recover, and the only thing it says is
+    // "Aborted(). Build with -sASSERTIONS for more info." -- which names neither the
+    // cause nor the fix. The cause is almost always the process being killed rather than
+    // stopped: a real Postgres replays its WAL after that, this does not.
+    //
+    // The message matters more than it looks. Without it the next step is half an hour
+    // of reading WASM stack traces about a database whose entire contents are, by design,
+    // reproducible in ten seconds.
+    console.error(`\n  The development database at ${path.relative(root, DATA_DIR)} will not open.`);
+    console.error('  This happens when the process was killed instead of stopped (Ctrl+C).');
+    console.error('\n  It holds nothing that cannot be rebuilt:');
+    console.error('    npm run db:dev:reset');
+    console.error('    npm run migrate && npm run seed\n');
+    console.error(`  (${err.message.split('\n')[0]})\n`);
+    process.exit(1);
+  }
+
   await db.exec('CREATE EXTENSION IF NOT EXISTS citext;');
 
   // maxConnections defaults to 1, which is a trap: a client that dies without closing
@@ -54,7 +74,13 @@ async function main() {
   // server restarts. Headroom means a crashed script cannot lock you out of your own
   // database. Queries are queued and executed one at a time regardless -- the extra
   // connections buy availability, not parallelism.
-  const server = new PGLiteSocketServer({ db, port: PORT, host: '127.0.0.1', maxConnections: 10 });
+  //
+  // 10 was not enough headroom either. `node --watch` restarts the API on every save,
+  // and a restart that does not close the pool cleanly leaks a slot -- so roughly ten
+  // edits in, every request failed with "Connection terminated unexpectedly" and nothing
+  // pointed at the cause. server.js now releases the pool on the forced shutdown path as
+  // well, and this is the belt: 64 slots is more edits than one sitting.
+  const server = new PGLiteSocketServer({ db, port: PORT, host: '127.0.0.1', maxConnections: 64 });
   await server.start();
 
   const url = `postgresql://postgres:postgres@127.0.0.1:${PORT}/postgres`;

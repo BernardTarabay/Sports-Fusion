@@ -4,15 +4,15 @@
 // grass, at night, with twenty-two people wanting to start. That means big targets, no
 // nested menus, and every action one tap from the pitch.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check, X, Minus, Plus, Trophy, Wallet, UserMinus, ChevronLeft, ChevronRight,
   CircleDot, AlertTriangle, Users, Clock, Lock,
 } from 'lucide-react';
 import { cn } from '../../lib/cn.js';
-import { toPlayerRating, time, shortDay, dayNumber, monthName, relativeDay } from '../../lib/format.js';
-import { Avatar, Badge, Button, Card, Input, Modal, Select, Segmented } from '../ui/index.jsx';
-import { PositionChip, TeamCrest, RatingBadge } from '../football/index.jsx';
+import { toPlayerRating, time, shortDay, dayNumber, monthName } from '../../lib/format.js';
+import { Avatar, Badge, Button, Card, Input, Modal, Select } from '../ui/index.jsx';
+import { PositionChip, TeamCrest } from '../football/index.jsx';
 import { formationsFor, describeFormation } from '../../lib/formations.js';
 
 /* ==========================================================================
@@ -366,52 +366,129 @@ export function PlayerControlPanel({
 /* ==========================================================================
    ScoreControl
 
-   Above the pitch, always visible. Tap to nudge, or type the final score.
+   Above the pitch, always visible.
+
+   THE SCORE IS NOT A NUMBER YOU SET
+   ---------------------------------
+   This used to be two steppers wired to a setScore() that the live backend rejects
+   outright -- tapping + produced an uncaught promise rejection in the console and no
+   visible response at all -- reading a `game.result.score.black` the server has never
+   sent, so the scoreboard on the main operational screen was frozen at 0 - 0 while
+   goals were being recorded underneath it.
+
+   Both halves of that were the same mistake. On the server the score is a fold over
+   goal events, deliberately, so that the header and the scorer list cannot disagree.
+   A setter could only ever contradict the scorers. So + does what it always meant:
+   it asks who scored, and records the goal against them. The score follows.
+
+   - reads the live per-team score the projection actually returns
+   - works for however many teams the balancer made, not just black and white
+   - the minus removes that team's most recent goal, which is what an admin
+     correcting their own last tap wants
    ========================================================================== */
 
-export function ScoreControl({ score, onChange, editable = true, className }) {
-  const black = score?.black ?? 0;
-  const white = score?.white ?? 0;
+export function ScoreControl({ teams = [], onScored, onUnscored, editable = true, className }) {
+  const [picking, setPicking] = useState(null);
 
-  const Side = ({ colour, value, onSet }) => (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="flex items-center gap-1.5">
-        <TeamCrest color={colour} size={20} />
-        <span className="display text-sm tracking-wide">{colour}</span>
-      </div>
+  const sides = teams.length > 0
+    ? teams
+    // Before the balancer has run there are no teams, but the header still has to draw
+    // something. Two placeholders, not editable, rather than an empty bar.
+    : [{ id: 'a', color: 'black', score: 0, players: [] },
+       { id: 'b', color: 'white', score: 0, players: [] }];
 
-      <div className="flex items-center gap-1">
-        {editable && (
-          <button
-            onClick={() => onSet(Math.max(0, value - 1))}
-            className="grid size-9 pointer-coarse:size-11 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] active:scale-90"
-            aria-label={`${colour} goal down`}
-          >
-            <Minus className="size-4" />
-          </button>
-        )}
-        <span className="display w-14 text-center text-5xl tnum sm:text-6xl" aria-live="polite">
-          {value}
-        </span>
-        {editable && (
-          <button
-            onClick={() => onSet(value + 1)}
-            className="grid size-9 pointer-coarse:size-11 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] hover:bg-[var(--bg-sunken)] active:scale-90"
-            aria-label={`${colour} goal up`}
-          >
-            <Plus className="size-4" />
-          </button>
-        )}
-      </div>
-    </div>
-  );
+  const scorers = (team) =>
+    [...(team.players ?? [])].sort((a, b) => (b.goals ?? 0) - (a.goals ?? 0));
 
   return (
-    <div className={cn('flex items-center justify-center gap-4 sm:gap-8', className)}>
-      <Side colour="black" value={black} onSet={(v) => onChange({ black: v, white })} />
-      <span className="display pb-6 text-2xl text-[var(--fg-muted)]">—</span>
-      <Side colour="white" value={white} onSet={(v) => onChange({ black, white: v })} />
-    </div>
+    <>
+      <div className={cn('flex items-center justify-center gap-4 sm:gap-8', className)}>
+        {sides.map((team, i) => (
+          <Fragment key={team.id}>
+            {i > 0 && <span className="display pb-6 text-2xl text-[var(--fg-muted)]">—</span>}
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <TeamCrest color={team.color} size={20} />
+                <span className="display text-sm capitalize tracking-wide">{team.color}</span>
+              </div>
+
+              <div className="flex items-center gap-1">
+                {editable && team.players?.length > 0 && (
+                  <button
+                    onClick={() => setPicking({ team, mode: 'remove' })}
+                    disabled={(team.score ?? 0) === 0}
+                    className="grid size-9 pointer-coarse:size-11 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] transition-colors hover:bg-[var(--bg-sunken)] active:scale-90 disabled:opacity-30"
+                    aria-label={`Remove a ${team.color} goal`}
+                  >
+                    <Minus className="size-4" />
+                  </button>
+                )}
+
+                <span
+                  className="display w-14 text-center text-5xl tnum sm:text-6xl"
+                  aria-live="polite"
+                  aria-label={`${team.color} ${team.score ?? 0}`}
+                >
+                  {team.score ?? 0}
+                </span>
+
+                {editable && team.players?.length > 0 && (
+                  <button
+                    onClick={() => setPicking({ team, mode: 'add' })}
+                    className="grid size-9 pointer-coarse:size-11 place-items-center rounded-[var(--radius-sm)] text-[var(--fg-muted)] transition-colors hover:bg-[var(--bg-sunken)] active:scale-90"
+                    aria-label={`Add a ${team.color} goal`}
+                  >
+                    <Plus className="size-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </Fragment>
+        ))}
+      </div>
+
+      <Modal
+        open={!!picking}
+        onOpenChange={(open) => !open && setPicking(null)}
+        title={picking?.mode === 'add' ? 'Who scored?' : 'Whose goal comes off?'}
+        description={
+          picking?.mode === 'add'
+            ? 'The score is the list of scorers, so a goal always belongs to somebody.'
+            : 'Removes their most recent goal.'
+        }
+      >
+        <div className="max-h-[55svh] space-y-1 overflow-y-auto">
+          {(picking ? scorers(picking.team) : [])
+            .filter((p) => picking?.mode === 'add' || (p.goals ?? 0) > 0)
+            .map((player) => (
+              <button
+                key={player.id}
+                onClick={() => {
+                  const goals = player.goals ?? 0;
+                  const next = picking.mode === 'add' ? goals + 1 : Math.max(0, goals - 1);
+                  const handler = picking.mode === 'add' ? onScored : onUnscored;
+                  setPicking(null);
+                  handler?.(player.id, next);
+                }}
+                className="flex min-h-14 w-full items-center gap-3 rounded-[var(--radius-md)] px-3 text-left transition-colors hover:bg-[var(--bg-sunken)]"
+              >
+                <Avatar name={player.name} size="sm" />
+                <span className="min-w-0 flex-1 truncate font-medium">{player.name}</span>
+                <PositionChip position={player.position} size="sm" />
+                {(player.goals ?? 0) > 0 && (
+                  <Badge tone="accent" size="sm">{player.goals}</Badge>
+                )}
+              </button>
+            ))}
+
+          {picking?.mode === 'remove' && scorers(picking.team).every((p) => !p.goals) && (
+            <p className="px-3 py-6 text-center text-sm text-[var(--fg-secondary)]">
+              Nobody on this team has scored yet.
+            </p>
+          )}
+        </div>
+      </Modal>
+    </>
   );
 }
 
@@ -463,7 +540,12 @@ export function GameTimeline({ games = [], currentId, onSelect, className }) {
 
       <div
         ref={railRef}
-        className="snap-rail flex-1 scrollbar-none py-1"
+        // min-w-0 is what makes the overflow actually scroll. A flex item defaults to
+        // `min-width: auto`, so `flex-1` will not shrink it below the intrinsic width of
+        // its contents -- the rail grew as wide as all the fixtures put together, its
+        // own `overflow-x: auto` never engaged, and the whole PAGE scrolled sideways
+        // instead. On a phone that clipped the game's heading off the left edge.
+        className="snap-rail min-w-0 flex-1 scrollbar-none py-1"
         role="tablist"
         aria-label="Match timeline"
       >
@@ -491,7 +573,7 @@ export function GameTimeline({ games = [], currentId, onSelect, className }) {
               </span>
               <span className="eyebrow text-[0.5rem] leading-none">{monthName(game.kickoffAt)}</span>
               <span className="mt-1 max-w-[4rem] truncate text-[0.5625rem] text-[var(--fg-muted)]">
-                {game.districtName}
+                {game.venue?.name ?? game.districtName}
               </span>
             </button>
           );

@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { useParams } from 'react-router';
-import { Trophy, Target, Handshake, CalendarCheck, Flame, Share2 } from 'lucide-react';
+import { Trophy, CalendarCheck, Flame } from 'lucide-react';
 import { usePlayer } from '../hooks/index.js';
 import { useSession } from '../state/session.jsx';
 import {
@@ -39,7 +39,11 @@ export default function PlayerProfile({ self = false }) {
   }
 
   const { player, history, ratingHistory, achievements } = data;
-  const attendanceRate = player.games > 0 ? player.attended / player.games : null;
+  // The server's figure, which counts a game cancelled with a day's notice as kept
+  // rather than missed. Recomputing it here as attended/registered punishes a player for
+  // pulling out early, which is the behaviour the league wants to encourage.
+  const attendanceRate = player.attendanceRate
+    ?? (player.games > 0 ? player.attended / player.games : null);
 
   const stats = [
     { label: 'Games', value: player.games },

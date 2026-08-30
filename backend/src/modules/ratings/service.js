@@ -400,25 +400,105 @@ export async function decayInactiveRatings({ inactiveDays = 30, limit = 500 } = 
 // Reading
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The seven boards.
+//
+// The page has always offered seven tabs; the API understood one. `metric` was not in
+// the query schema, and `validate` REPLACES req.query with the parsed result, so the
+// parameter was silently dropped and every tab rendered the same rating table. Six of
+// the seven were decoration.
+//
+// The point of having seven is stated on the page itself: one "best players" table makes
+// most of a community feel like spectators. So each of these is a genuinely different
+// question, and each carries its own qualifying rule -- ranking assists over a season
+// needs a different floor from ranking reliability.
+//
+// Written as SQL fragments over one shared query rather than as seven queries, because
+// the joins, the district filter and the naming are identical and the only things that
+// vary are what is counted and how ties break.
+// ---------------------------------------------------------------------------
+
+const METRICS = {
+  // Ordered by the conservative estimate, not the raw rating. A newcomer on 1600 +/- 350
+  // has not proved anything; a regular on 1500 +/- 40 has. Ranking on the raw number
+  // would put whoever played best last Friday top of the league, which is a scoreboard,
+  // not a ranking.
+  rating: {
+    value: `(p.rating_mu - 2 * p.rating_sigma)`,
+    order: `(p.rating_mu - 2 * p.rating_sigma) DESC`,
+    minGames: 5,
+    // The only board that hides provisional players: it is the one claiming to know.
+    hideProvisional: true,
+  },
+  // Rating movement across the last five rated games -- who is on the way up right now.
+  form: {
+    value: `COALESCE(form.delta, 0)`,
+    order: `COALESCE(form.delta, 0) DESC`,
+    minGames: 3,
+  },
+  goals: {
+    value: `COALESCE(tally.goals, 0)`,
+    // Goals first, then fewer games to get them: two players on nine goals are not level
+    // if one took twice as long about it.
+    order: `COALESCE(tally.goals, 0) DESC, COALESCE(played.games, 0) ASC`,
+    minGames: 1,
+    minValue: 1,
+  },
+  assists: {
+    value: `COALESCE(tally.assists, 0)`,
+    order: `COALESCE(tally.assists, 0) DESC, COALESCE(played.games, 0) ASC`,
+    minGames: 1,
+    minValue: 1,
+  },
+  motm: {
+    value: `COALESCE(awards.motm, 0)`,
+    order: `COALESCE(awards.motm, 0) DESC, COALESCE(played.games, 0) ASC`,
+    minGames: 1,
+    minValue: 1,
+  },
+  // Turning up when you said you would: appearances over commitments, where pulling out
+  // with a day's notice is not held against you and a no-show is. Three games minimum,
+  // because one no-show out of one game is 0% and means nothing.
+  reliability: {
+    value: `COALESCE(rel.rate, 0)`,
+    order: `COALESCE(rel.rate, 0) DESC, COALESCE(rel.commitments, 0) DESC`,
+    minGames: 3,
+  },
+  // The biggest climb across the last ten rated games. Deliberately not the same as
+  // `form`, which is the last five: this is the whole ascent, that is the current run.
+  improved: {
+    value: `COALESCE(climb.delta, 0)`,
+    order: `COALESCE(climb.delta, 0) DESC`,
+    minGames: 5,
+    minValue: 1,
+  },
+};
+
+export const LEADERBOARD_METRICS = Object.keys(METRICS);
+
 /**
- * Ranked players.
+ * One board.
  *
- * Ordered by the conservative estimate, not the raw rating. A newcomer on 1600 +/- 350
- * has not proved anything; a regular on 1500 +/- 40 has. Ranking on the raw number would
- * put whoever played best last Friday at the top of the league, which is a scoreboard,
- * not a ranking.
+ * `metric` selects which question is being asked. Everything else -- the district filter,
+ * the naming, the shape of a row -- is identical whichever it is, so the client renders
+ * all seven from one component.
  */
 export async function getLeaderboard({
-  districtId, limit = 50, offset = 0, minGames = 5, includeProvisional = false,
+  districtId, limit = 50, offset = 0, minGames, includeProvisional = false, metric = 'rating',
 } = {}) {
-  const params = [minGames, limit, offset];
+  const board = METRICS[metric] ?? METRICS.rating;
+  const floor = minGames ?? board.minGames;
+
+  const params = [floor, limit, offset];
   const conditions = [`p.status = 'active'`];
 
   if (districtId) {
     params.push(districtId);
     conditions.push(`p.home_district_id = $${params.length}`);
   }
-  if (!includeProvisional) conditions.push(`p.rating_sigma <= 150`);
+  if (board.hideProvisional && !includeProvisional) conditions.push(`p.rating_sigma <= 150`);
+  // A goals board listing forty players on nought is not a ranking of anything.
+  if (board.minValue != null) conditions.push(`${board.value} >= ${board.minValue}`);
 
   const { rows } = await query(
     `WITH played AS (
@@ -426,19 +506,81 @@ export async function getLeaderboard({
          FROM registrations r
         WHERE r.attendance IN ('attended', 'late')
         GROUP BY r.player_id
+     ),
+     tally AS (
+       -- Goals and assists from the live event log, which is where they are recorded on
+       -- the touchline, rather than from player_match_stats, which is only written when
+       -- an admin files a full result afterwards.
+       SELECT e.player_id AS player_id,
+              count(*) FILTER (WHERE e.type = 'goal')::int AS goals,
+              0 AS assists
+         FROM match_events e
+        WHERE e.voided_at IS NULL AND e.player_id IS NOT NULL
+        GROUP BY e.player_id
+     ),
+     assisted AS (
+       SELECT e.assist_id AS player_id, count(*)::int AS assists
+         FROM match_events e
+        WHERE e.voided_at IS NULL AND e.assist_id IS NOT NULL
+        GROUP BY e.assist_id
+     ),
+     awards AS (
+       SELECT ma.player_id, count(*)::int AS motm
+         FROM match_awards ma WHERE ma.award_type = 'motm' GROUP BY ma.player_id
+     ),
+     rel AS (
+       -- A commitment is every registration that was not cancelled early enough to free
+       -- the slot for somebody else. Turning up, or pulling out with a day's notice, is
+       -- keeping your word; a no-show is not.
+       SELECT r.player_id,
+              count(*)::int AS commitments,
+              round(
+                count(*) FILTER (WHERE r.attendance IN ('attended','late'))::numeric
+                / NULLIF(count(*), 0), 3) AS rate
+         FROM registrations r
+         JOIN games g ON g.id = r.game_id
+        WHERE g.status = 'completed'
+          AND (r.status <> 'cancelled' OR COALESCE(r.cancel_lead_hours, 0) < 24)
+        GROUP BY r.player_id
+     ),
+     movement AS (
+       SELECT pr.player_id, pr.mu, pr.previous_mu,
+              row_number() OVER (PARTITION BY pr.player_id ORDER BY pr.effective_at DESC) AS n
+         FROM player_ratings pr
+        WHERE pr.source = 'match_result'
+     ),
+     form AS (
+       SELECT player_id, round(sum(mu - COALESCE(previous_mu, mu)), 1) AS delta
+         FROM movement WHERE n <= 5 GROUP BY player_id
+     ),
+     climb AS (
+       SELECT player_id, round(sum(mu - COALESCE(previous_mu, mu)), 1) AS delta
+         FROM movement WHERE n <= 10 GROUP BY player_id
      )
      SELECT p.id, p.rating_mu, p.rating_sigma, p.rating_volatility,
-            COALESCE(played.games, 0) AS games,
+            p.preferred_position,
+            COALESCE(played.games, 0)      AS games,
             u.display_name, p.jersey_name, d.name AS district_name,
-            (SELECT count(*)::int FROM match_awards ma
-              WHERE ma.player_id = p.id AND ma.award_type = 'motm') AS motm
+            COALESCE(awards.motm, 0)       AS motm,
+            COALESCE(tally.goals, 0)       AS goals,
+            COALESCE(assisted.assists, 0)  AS assists,
+            COALESCE(rel.rate, 0)          AS reliability,
+            COALESCE(form.delta, 0)        AS form_delta,
+            COALESCE(climb.delta, 0)       AS climb_delta,
+            ${board.value}                  AS metric_value
        FROM players p
        JOIN users u ON u.id = p.user_id
        LEFT JOIN districts d ON d.id = p.home_district_id
-       LEFT JOIN played ON played.player_id = p.id
+       LEFT JOIN played   ON played.player_id   = p.id
+       LEFT JOIN tally    ON tally.player_id    = p.id
+       LEFT JOIN assisted ON assisted.player_id = p.id
+       LEFT JOIN awards   ON awards.player_id   = p.id
+       LEFT JOIN rel      ON rel.player_id      = p.id
+       LEFT JOIN form     ON form.player_id     = p.id
+       LEFT JOIN climb    ON climb.player_id    = p.id
       WHERE ${conditions.join(' AND ')}
         AND COALESCE(played.games, 0) >= $1
-      ORDER BY (p.rating_mu - 2 * p.rating_sigma) DESC
+      ORDER BY ${board.order}, u.display_name ASC
       LIMIT $2 OFFSET $3`,
     params
   );
@@ -447,15 +589,35 @@ export async function getLeaderboard({
     const state = stateOf(row);
     return {
       rank: offset + i + 1,
+      // BOTH. `playerId` is what this endpoint has always returned; `id` is what every
+      // consumer of it reads -- so every leaderboard row linked to /players/undefined,
+      // and every React key in the table was the same undefined.
+      id: row.id,
       playerId: row.id,
       name: row.jersey_name || row.display_name,
+      position: row.preferred_position,
       districtName: row.district_name,
+      // The raw Glicko pair as well as the rounded rating. Every component that draws a
+      // rating badge -- the leaderboard rows, the podium, a player card anywhere -- takes
+      // mu and sigma, because it needs the deviation to know whether to show the number
+      // as provisional. Sending only `rating` left every badge on the leaderboard blank.
+      ratingMu: Number(state.rating),
+      ratingSigma: Number(state.deviation),
       rating: Math.round(state.rating),
       deviation: Math.round(state.deviation),
       conservative: Math.round(conservativeRating(state)),
       isProvisional: isProvisional(state),
       games: row.games,
       motm: row.motm,
+      goals: row.goals,
+      assists: row.assists,
+      reliability: Number(row.reliability),
+      formDelta: Number(row.form_delta),
+      improvedDelta: Number(row.climb_delta),
+      metric,
+      // What this board is ordered by, so a row can render "9" or "83%" without knowing
+      // which board it is on.
+      value: Number(row.metric_value),
     };
   });
 }

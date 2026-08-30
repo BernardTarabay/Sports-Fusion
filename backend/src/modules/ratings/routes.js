@@ -5,6 +5,7 @@ import { validate, asyncHandler } from '../../middleware/validate.js';
 import { authenticate, optionalAuth } from '../../middleware/authenticate.js';
 import { requireRoles } from '../../middleware/authorize.js';
 import { DEFAULTS } from './glicko2.js';
+import { LEADERBOARD_METRICS } from './service.js';
 
 const router = Router();
 const uuid = z.string().uuid();
@@ -19,11 +20,17 @@ router.get(
   validate({
     query: z.object({
       districtId: uuid.optional(),
+      // Which board. The client has always sent this and the schema never accepted it --
+      // and because `validate` REPLACES req.query with what it parsed, an unlisted key
+      // is not merely ignored, it is deleted. Six of the seven tabs rendered the rating
+      // table. An unknown value falls back to 'rating' rather than 422: a stale tab
+      // asking for a board that has been renamed should show a leaderboard, not an error.
+      metric: z.enum(LEADERBOARD_METRICS).catch('rating').default('rating'),
       limit: z.coerce.number().int().min(1).max(100).default(50),
       offset: z.coerce.number().int().min(0).default(0),
-      // Ranking someone the system barely knows is how a leaderboard loses credibility,
-      // so provisional players are hidden unless explicitly asked for.
-      minGames: z.coerce.number().int().min(0).max(100).default(5),
+      // Each board carries its own qualifying floor (see METRICS); this overrides it.
+      // Ranking someone the system barely knows is how a leaderboard loses credibility.
+      minGames: z.coerce.number().int().min(0).max(100).optional(),
       includeProvisional: z.enum(['true', 'false']).default('false')
         .transform((v) => v === 'true'),
     }),

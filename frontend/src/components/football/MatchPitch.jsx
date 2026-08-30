@@ -217,34 +217,75 @@ const Marker = memo(function Marker({
  * team is full: an admin looking at four defenders and two empty midfield slots knows
  * exactly what they are still short of.
  *
- * Also a drop target, so a player can be dragged into a gap rather than only swapped
- * with somebody who is already on.
+ * And it is a REAL PLACE, not a gap at the end of a list. A player can be dropped here
+ * whether or not anybody is standing anywhere near it — see `bySlot` below for why that
+ * used to be impossible.
  */
-function EmptySlot({ slot, x, y, r, isHovered }) {
+function EmptySlot({ slot, x, y, r, isHovered, dimmed }) {
   return (
-    <g
-      transform={`translate(${x} ${y})`}
-      className="pointer-events-none"
-      aria-hidden="true"
-    >
+    <g transform={`translate(${x} ${y})`} className="pointer-events-none" aria-hidden="true">
       <circle
-        r={r}
-        fill="var(--pitch-empty-fill, rgb(255 255 255 / 0.05))"
-        stroke={isHovered ? 'var(--accent)' : 'rgb(255 255 255 / 0.35)'}
+        r={isHovered ? r + 6 : r}
+        fill={isHovered ? 'rgb(0 192 106 / 0.30)' : 'rgb(255 255 255 / 0.06)'}
+        stroke={isHovered ? 'var(--accent)' : 'rgb(255 255 255 / 0.32)'}
         strokeWidth={isHovered ? 2.5 : 1.5}
         strokeDasharray={isHovered ? 'none' : '4 3'}
+        opacity={dimmed ? 0.55 : 1}
+        className="transition-all duration-100"
       />
       <text
         y={r * 0.32}
         textAnchor="middle"
         className="pointer-events-none select-none"
-        fill="rgb(255 255 255 / 0.55)"
+        fill="rgb(255 255 255 / 0.6)"
         style={{ fontSize: r * 0.62, fontWeight: 700, letterSpacing: '0.02em' }}
       >
         {slot.label}
       </text>
     </g>
   );
+}
+
+/**
+ * Lay a team's players out across the formation's slots.
+ *
+ * THE POINT OF THIS FUNCTION
+ *
+ * `team.players` used to be treated as a dense array whose INDEX was the pitch position.
+ * That quietly made an empty slot undroppable: with nine players there was no slot 10,
+ * so the far post did not exist as a place, and dragging somebody towards it either did
+ * nothing or appended them to the end of the list instead. Positions could only ever be
+ * swapped with an occupied one.
+ *
+ * The server now stores `slotIndex` per player, so a squad of five can stand wherever
+ * they like and the gaps between them are real. Anyone without one — just added to the
+ * sheet, say — takes the lowest free slot, which is what the server settles them to on
+ * the next write anyway.
+ *
+ * `overflow` is for a team with more players than the formation has places. It cannot
+ * happen from the pitch, but it can from the roster, and dropping those players silently
+ * off the board would be the worst of the available answers.
+ */
+function bySlot(team, slotCount) {
+  const placed = new Array(slotCount).fill(null);
+  const overflow = [];
+  const waiting = [];
+
+  for (const player of team.players ?? []) {
+    const i = player.slotIndex;
+    if (i == null) { waiting.push(player); continue; }
+    if (i >= slotCount) { overflow.push(player); continue; }
+    if (placed[i]) { waiting.push(player); continue; }
+    placed[i] = player;
+  }
+
+  for (const player of waiting) {
+    const free = placed.indexOf(null);
+    if (free === -1) overflow.push(player);
+    else placed[free] = player;
+  }
+
+  return { placed, overflow };
 }
 
 export function MatchPitch({
@@ -273,6 +314,12 @@ export function MatchPitch({
   const slots = useMemo(
     () => slotsFor(teamSize ?? 11, formation),
     [teamSize, formation]
+  );
+
+  // Who is standing where, per team. The whole board reads from this.
+  const layout = useMemo(
+    () => teams.map((team) => bySlot(team, slots.length)),
+    [teams, slots.length]
   );
 
   /**
@@ -418,60 +465,52 @@ export function MatchPitch({
           <Markings box={box} portrait={portrait} />
         </g>
 
-        {/* Empty slots show only while dragging: the pitch stays clean the rest of the
-            time, and during a drag every legal destination is visible. */}
-        {drag &&
-          dropTargets.map((target) => {
-            const occupied = teams[target.teamIndex]?.players?.[target.slotIndex];
-            const isHover =
-              hoverSlot?.teamId === target.teamId && hoverSlot?.slotIndex === target.slotIndex;
-            return (
-              <g key={`${target.teamId}-${target.slotIndex}`} transform={`translate(${target.x} ${target.y})`}>
-                <circle
-                  r={isHover ? markerRadius + 8 : markerRadius}
-                  fill={isHover ? 'rgb(0 192 106 / 0.28)' : 'rgb(255 255 255 / 0.10)'}
-                  stroke={isHover ? 'var(--accent)' : 'rgb(255 255 255 / 0.35)'}
-                  strokeWidth={isHover ? 2.5 : 1.5}
-                  strokeDasharray={occupied ? '4 3' : undefined}
-                  className="transition-all duration-100"
-                />
-                <text
-                  textAnchor="middle" dominantBaseline="central"
-                  fontSize="8" fontWeight="700" fill="rgb(255 255 255 / 0.75)"
-                  style={{ fontFamily: 'var(--font-display)' }}
-                >
-                  {target.slot.label}
-                </text>
-              </g>
-            );
-          })}
-
         {teams.map((team, teamIndex) => {
           const colour = TEAM_COLOURS[team.color] ?? TEAM_COLOURS.black;
+          const { placed } = layout[teamIndex] ?? { placed: [] };
+
           return (
             <g key={team.id ?? team.color}>
-              {/* The positions nobody is standing in yet. Rendered first so a real
-                  player always paints over an empty disc, never under it. */}
-              {Array.from(
-                { length: Math.max(0, slots.length - (team.players?.length ?? 0)) },
-                (_, k) => {
-                  const i = (team.players?.length ?? 0) + k;
-                  const slot = slots[i];
-                  if (!slot) return null;
-                  const { x, y } = place(slot, teamIndex);
-                  const hovered = hoverSlot?.teamId === team.id && hoverSlot?.slotIndex === i;
-                  return (
-                    <EmptySlot
-                      key={`empty-${team.id ?? team.color}-${i}`}
-                      slot={slot} x={x} y={y} r={markerRadius} isHovered={hovered}
-                    />
-                  );
-                }
-              )}
+              {/* Every position nobody is standing in. Rendered first, so a real player
+                  always paints over an empty disc rather than under it.
 
-              {(team.players ?? []).map((player, i) => {
-                const slot = slots[i] ?? slots[slots.length - 1];
+                  Shown whenever the board is interactive, not only mid-drag: an admin
+                  needs to see where the gaps ARE before deciding to drag anybody into
+                  one. On a read-only pitch they stay hidden, because a player looking at
+                  their team sheet does not need to be told about vacancies. */}
+              {(interactive || drag) && slots.map((slot, i) => {
+                if (placed[i]) return null;
                 const { x, y } = place(slot, teamIndex);
+                const hovered = hoverSlot?.teamId === team.id && hoverSlot?.slotIndex === i;
+                return (
+                  <EmptySlot
+                    key={`empty-${team.id ?? team.color}-${i}`}
+                    slot={slot} x={x} y={y} r={markerRadius}
+                    isHovered={hovered}
+                    dimmed={!drag}
+                  />
+                );
+              })}
+
+              {/* A ring on an OCCUPIED slot the drag is hovering, so a swap reads as a
+                  swap rather than looking like nothing is going to happen. */}
+              {drag && slots.map((slot, i) => {
+                if (!placed[i]) return null;
+                if (hoverSlot?.teamId !== team.id || hoverSlot?.slotIndex !== i) return null;
+                const { x, y } = place(slot, teamIndex);
+                return (
+                  <circle
+                    key={`swap-${team.id ?? team.color}-${i}`}
+                    cx={x} cy={y} r={markerRadius + 8}
+                    fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeDasharray="4 3"
+                    className="pointer-events-none"
+                  />
+                );
+              })}
+
+              {placed.map((player, i) => {
+                if (!player) return null;
+                const { x, y } = place(slots[i], teamIndex);
                 return (
                   <Marker
                     key={player.id}
@@ -493,6 +532,31 @@ export function MatchPitch({
           );
         })}
       </svg>
+
+      {/* More players than the formation has places.
+          Cannot happen from the board itself, but it can from the roster — and dropping
+          somebody silently off the pitch is the worst of the available answers. */}
+      {layout.some((l) => l.overflow.length > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] bg-[var(--bg-sunken)] px-3 py-2">
+          <span className="eyebrow text-[0.625rem] text-[var(--fg-muted)]">Not on the board</span>
+          {teams.map((team, i) =>
+            (layout[i]?.overflow ?? []).map((player) => (
+              <button
+                key={player.id}
+                onClick={() => onSelectPlayer?.(player)}
+                className="rounded-full bg-[var(--bg-surface)] px-2.5 py-1 text-xs font-medium"
+              >
+                {player.name}
+                <span className="ml-1 text-[var(--fg-muted)]">{team.color}</span>
+              </button>
+            ))
+          )}
+          <span className="text-[0.6875rem] text-[var(--fg-secondary)]">
+            More players than {formation ?? 'this formation'} has positions. Change the
+            formation or move somebody off.
+          </span>
+        </div>
+      )}
 
       {/* The same team sheet as text, for screen readers and for print. */}
       <div className="sr-only print:not-sr-only">

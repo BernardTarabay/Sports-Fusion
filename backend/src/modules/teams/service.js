@@ -182,13 +182,14 @@ export async function generateTeams({ gameId, seed, weights, actorUserId, force 
       );
       const teamId = teamRows[0].id;
 
-      for (const player of team.players) {
+      for (const [slotIndex, player] of team.players.entries()) {
         await client.query(
           `INSERT INTO team_players (
-             team_id, game_id, player_id, assigned_position,
+             team_id, game_id, player_id, assigned_position, slot_index,
              rating_mu_at_assignment, rating_sigma_at_assignment)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [teamId, gameId, player.id, player.assignedPosition, player.ratingMu, player.ratingSigma]
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [teamId, gameId, player.id, player.assignedPosition, slotIndex,
+           player.ratingMu, player.ratingSigma]
         );
       }
 
@@ -238,7 +239,7 @@ export async function getTeams(gameId, client) {
   const run = client ?? { query };
   const { rows } = await run.query(
     `SELECT gt.id AS team_id, gt.color, gt.strength, gt.run_id,
-            tp.player_id, tp.assigned_position, tp.is_manual_override,
+            tp.player_id, tp.assigned_position, tp.is_manual_override, tp.slot_index,
             tp.rating_mu_at_assignment,
             p.is_goalkeeper, p.jersey_name, u.display_name
        FROM game_teams gt
@@ -246,7 +247,10 @@ export async function getTeams(gameId, client) {
        LEFT JOIN players p ON p.id = tp.player_id
        LEFT JOIN users u ON u.id = p.user_id
       WHERE gt.game_id = $1
-      ORDER BY gt.color, tp.assigned_position`,
+      -- By the position on the pitch, not by the name of the position. Ordering on
+      -- assigned_position sorted the team sheet alphabetically -- CAM, CB, CB, CDM --
+      -- which is what the tactical board was reading as its slot order.
+      ORDER BY gt.color, tp.slot_index NULLS LAST, tp.assigned_position`,
     [gameId]
   );
 
@@ -264,6 +268,7 @@ export async function getTeams(gameId, client) {
         id: r.player_id,
         name: r.jersey_name || r.display_name,
         position: r.assigned_position,
+        slotIndex: r.slot_index,
         ratingMu: r.rating_mu_at_assignment == null ? null : Number(r.rating_mu_at_assignment),
         isGoalkeeper: r.is_goalkeeper,
         isManualOverride: r.is_manual_override,
@@ -275,15 +280,70 @@ export async function getTeams(gameId, client) {
 }
 
 /**
- * Apply admin overrides: a list of {playerId, toTeamId} moves.
+ * Apply admin overrides: a list of {playerId, toTeamId, slotIndex?} moves.
  *
  * Two players swapping is the normal case; a one-way move is allowed but leaves uneven
  * teams, so the response reports the resulting sizes rather than silently permitting it.
  *
- * Every override is flagged on team_players. That flag is the training signal for
- * inferred relationships -- when an admin repeatedly puts the same two players together,
- * the system can learn a `play_with` preference instead of fighting the admin weekly.
+ * A MOVE IS A TEAM *AND* A PLACE.
+ *
+ * This used to be a team-only operation, and it began with
+ * `if (rows[0].team_id === move.toTeamId) continue` -- so dragging somebody from left
+ * back to right wing did nothing at all on the server. The arrangement an admin built on
+ * the tactical board survived until the next refetch and then reverted, because the
+ * pitch was inferring positions from an array ordered by `assigned_position`.
+ *
+ * `slotIndex` is where on the board they were dropped, and it is stored. It may point at
+ * a place nobody is standing in: an empty slot is a real destination, which is what lets
+ * a squad of five arrange itself across the pitch instead of bunching at the front.
+ *
+ * OVERRIDE IS FLAGGED ONLY WHEN THE TEAM CHANGES.
+ *
+ * That flag is the training signal for inferred relationships -- when an admin
+ * repeatedly puts the same two players together, the system can learn a `play_with`
+ * preference instead of fighting the admin every week. Moving somebody five yards
+ * within their own side says nothing about who they want to play with, so it must not
+ * mark them as hand-placed; the whole sheet is sent on every arrangement, and flagging
+ * all of it would drown the signal.
  */
+/**
+ * Give every unplaced player on these teams the lowest free slot.
+ *
+ * "Unplaced" happens for two ordinary reasons: somebody was displaced by a move into
+ * their slot, or they were added to the sheet by a path that does not know about the
+ * tactical board at all. Either way the pitch needs a place to draw them, and deciding
+ * that on the client means two admins looking at the same game can see different
+ * arrangements.
+ *
+ * Lowest free slot, in a stable order, so the result does not depend on row order.
+ */
+async function settleSlots(client, gameId, teamIds) {
+  if (teamIds.length === 0) return;
+
+  const { rows } = await client.query(
+    `SELECT id, team_id, slot_index
+       FROM team_players
+      WHERE game_id = $1 AND team_id = ANY($2::uuid[])
+      ORDER BY team_id, slot_index NULLS LAST, assigned_position NULLS LAST, created_at, id`,
+    [gameId, teamIds]
+  );
+
+  const takenByTeam = new Map();
+  for (const row of rows) {
+    if (!takenByTeam.has(row.team_id)) takenByTeam.set(row.team_id, new Set());
+    if (row.slot_index != null) takenByTeam.get(row.team_id).add(row.slot_index);
+  }
+
+  for (const row of rows) {
+    if (row.slot_index != null) continue;
+    const taken = takenByTeam.get(row.team_id);
+    let slot = 0;
+    while (taken.has(slot)) slot += 1;
+    taken.add(slot);
+    await client.query('UPDATE team_players SET slot_index = $2 WHERE id = $1', [row.id, slot]);
+  }
+}
+
 export async function applyOverride({ gameId, moves, actorUserId }) {
   return withTransaction(async (client) => {
     const { rows: teamRows } = await client.query(
@@ -292,6 +352,27 @@ export async function applyOverride({ gameId, moves, actorUserId }) {
     if (teamRows.length === 0) throw new ConflictError('Teams have not been generated', 'NO_TEAMS');
     const validTeamIds = new Set(teamRows.map((t) => t.id));
 
+    // Clear first, then place.
+    //
+    // (team_id, slot_index) is unique, so applying a swap one row at a time trips the
+    // index the moment the first player lands on a square the second has not left yet.
+    // Vacating every slot named in this batch removes the ordering dependency entirely.
+    const slotted = moves.filter((m) => m.slotIndex != null);
+    if (slotted.length > 0) {
+      await client.query(
+        `UPDATE team_players SET slot_index = NULL
+          WHERE game_id = $1 AND player_id = ANY($2::uuid[])`,
+        [gameId, slotted.map((m) => m.playerId)]
+      );
+      for (const move of slotted) {
+        await client.query(
+          `UPDATE team_players SET slot_index = NULL
+            WHERE game_id = $1 AND team_id = $2 AND slot_index = $3`,
+          [gameId, move.toTeamId, move.slotIndex]
+        );
+      }
+    }
+
     const before = [];
     for (const move of moves) {
       if (!validTeamIds.has(move.toTeamId)) {
@@ -299,22 +380,42 @@ export async function applyOverride({ gameId, moves, actorUserId }) {
       }
 
       const { rows } = await client.query(
-        `SELECT id, team_id FROM team_players WHERE game_id = $1 AND player_id = $2`,
+        `SELECT id, team_id, slot_index FROM team_players
+          WHERE game_id = $1 AND player_id = $2`,
         [gameId, move.playerId]
       );
       if (rows.length === 0) throw new NotFoundError('Player on this game sheet');
-      if (rows[0].team_id === move.toTeamId) continue;
 
-      before.push({ playerId: move.playerId, fromTeamId: rows[0].team_id, toTeamId: move.toTeamId });
+      const current = rows[0];
+      const changedTeam = current.team_id !== move.toTeamId;
 
-      await client.query(
-        `UPDATE team_players
-            SET team_id = $2, is_manual_override = true, moved_from_team_id = team_id,
-                moved_by = $3, moved_at = now()
-          WHERE id = $1`,
-        [rows[0].id, move.toTeamId, actorUserId ?? null]
-      );
+      if (changedTeam) {
+        before.push({ playerId: move.playerId, fromTeamId: current.team_id, toTeamId: move.toTeamId });
+        await client.query(
+          `UPDATE team_players
+              SET team_id = $2, slot_index = $3,
+                  is_manual_override = true, moved_from_team_id = team_id,
+                  moved_by = $4, moved_at = now()
+            WHERE id = $1`,
+          [current.id, move.toTeamId, move.slotIndex ?? null, actorUserId ?? null]
+        );
+      } else if (move.slotIndex != null) {
+        // Same side, new place. Not an override -- see the note above.
+        await client.query(
+          `UPDATE team_players SET slot_index = $2 WHERE id = $1`,
+          [current.id, move.slotIndex]
+        );
+      }
     }
+
+    // Everybody on a team is standing somewhere.
+    //
+    // A move into an occupied slot displaces whoever was there, and a cross-team move
+    // leaves them with nowhere to go -- so without this a player ends up on the sheet
+    // with a null slot and the pitch has to invent a position for them, differently on
+    // every client. Settling it here means the arrangement is a fact of the game rather
+    // than a rendering decision.
+    await settleSlots(client, gameId, [...validTeamIds]);
 
     // Recompute each team's strength from the rating snapshot taken at assignment, so
     // the number shown is comparable with the one the generator produced.

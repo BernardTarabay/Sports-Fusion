@@ -18,6 +18,8 @@
 
 import { withTransaction, query } from '../../database/pool.js';
 import { NotFoundError, ConflictError, ValidationError } from '../../lib/errors.js';
+import { shapeResult, RESULT_COLUMNS, RESULT_JOINS } from '../games/service.js';
+import { venueLogoPath } from '../../lib/venueLogo.js';
 
 // The database raises this when payments are attempted mid-match (see 015_matchday.sql).
 const CHECK_VIOLATION = '23514';
@@ -62,6 +64,12 @@ const TRANSITIONS = {
   abandon:  { from: ['first_half', 'halftime', 'second_half'], to: 'abandoned' },
   pause:    { from: ['first_half', 'second_half'],  to: null },
   unpause:  { from: ['first_half', 'second_half'],  to: null },
+  // Back to the start. The one transition that goes backwards, and it exists because
+  // every other one is a one-way door on a phone held in the dark at the side of a
+  // pitch: tapping "End" at half time finished the match, set the game to completed,
+  // and left no way to carry on playing. The goals, the payments and the roster are all
+  // untouched -- this rewinds the clock, not the match.
+  reset:    { from: ['finished', 'abandoned', 'halftime', 'first_half', 'second_half'], to: 'not_started' },
 };
 
 export async function advanceClock({ gameId, action, actorUserId }) {
@@ -120,6 +128,21 @@ export async function advanceClock({ gameId, action, actorUserId }) {
                     paused_ms = 0, paused_at = NULL
               WHERE id = $1`;
       params = [gameId, now];
+    } else if (action === 'reset') {
+      // The clock goes back to zero and the game leaves whatever terminal state the
+      // clock put it in. Goals, payments, attendance and the roster all stay: this
+      // undoes a mis-tap on the clock, not the evening.
+      //
+      // The status only moves if the CLOCK is what moved it. A game an admin cancelled
+      // deliberately stays cancelled -- resetting the clock is not a way to un-cancel.
+      sql = `UPDATE games
+                SET clock_state = 'not_started',
+                    status = CASE WHEN status IN ('in_progress', 'completed')
+                                  THEN 'teams_generated' ELSE status END,
+                    started_at = NULL, ended_at = NULL, period_started_at = NULL,
+                    elapsed_ms_at_period_start = 0, paused_ms = 0, paused_at = NULL
+              WHERE id = $1`;
+      params = [gameId];
     } else {
       // end | abandon
       sql = `UPDATE games
@@ -200,9 +223,37 @@ export async function setPlayerStat({ gameId, playerId, patch, actorUserId }) {
 
     if ('goals' in patch) await reconcileEvents(client, game, playerId, 'goal', patch.goals, actorUserId);
     if ('assists' in patch) await reconcileAssists(client, game, playerId, patch.assists, actorUserId);
+    if ('rating' in patch) await setMatchRating(client, gameId, playerId, patch.rating, actorUserId);
 
     return getMatchday(gameId, client);
   });
+}
+
+/**
+ * The admin's 1-10 opinion of one performance.
+ *
+ * Stored beside the goals and assists for that game, on `player_match_stats`, which is
+ * unique on (game_id, player_id) and so is exactly one row per player per match.
+ *
+ * NOT the Glicko rating. That one is derived from results and recomputed from the ledger
+ * on every replay, so a human number written into it would be silently erased the next
+ * time the engine ran. This is an opinion; the rating engine does not read it.
+ */
+async function setMatchRating(client, gameId, playerId, rating, actorUserId) {
+  const { rows } = await client.query(
+    `SELECT tp.team_id FROM team_players tp WHERE tp.game_id = $1 AND tp.player_id = $2`,
+    [gameId, playerId]
+  );
+
+  await client.query(
+    `INSERT INTO player_match_stats (game_id, player_id, team_id, match_rating, rated_by, recorded_by)
+     VALUES ($1, $2, $3, $4, $5, $5)
+     ON CONFLICT (game_id, player_id)
+     DO UPDATE SET match_rating = EXCLUDED.match_rating,
+                   rated_by = EXCLUDED.rated_by,
+                   updated_at = now()`,
+    [gameId, playerId, rows[0]?.team_id ?? null, rating, actorUserId ?? null]
+  );
 }
 
 export async function markAllAttendance({ gameId, status, playerIds, actorUserId }) {
@@ -321,6 +372,18 @@ export async function setFormation({ gameId, formation, actorUserId }) {
   });
 }
 
+/** Guard the team sheet, or release it. */
+export async function setTeamsLocked({ gameId, locked, actorUserId }) {
+  return withTransaction(async (client) => {
+    const { rowCount } = await client.query(
+      'UPDATE games SET teams_locked = $2 WHERE id = $1', [gameId, locked]
+    );
+    if (!rowCount) throw new NotFoundError('Game not found');
+    await audit(client, actorUserId, locked ? 'teams.lock' : 'teams.unlock', gameId, null, { locked });
+    return getMatchday(gameId, client);
+  });
+}
+
 export async function setMotm({ gameId, playerId, actorUserId }) {
   return withTransaction(async (client) => {
     await client.query(`DELETE FROM match_awards WHERE game_id = $1 AND award_type = 'motm'`, [gameId]);
@@ -367,10 +430,13 @@ export async function getMatchday(gameId, client) {
   const { rows: gameRows } = await run.query(
     `SELECT g.*, d.name AS district_name, d.slug AS district_slug,
             v.name AS venue_name, v.address AS venue_address,
-            v.google_maps_url AS venue_maps_url, v.logo_url AS venue_logo
+            v.google_maps_url AS venue_maps_url,
+            (v.logo_url IS NOT NULL) AS venue_has_logo, v.updated_at AS venue_updated_at,
+            ${RESULT_COLUMNS}
        FROM games g
        JOIN districts d ON d.id = g.district_id
        LEFT JOIN venues v ON v.id = g.venue_id
+       ${RESULT_JOINS}
       WHERE g.id = $1`,
     [gameId]
   );
@@ -385,6 +451,7 @@ export async function getMatchday(gameId, client) {
                 p.rating_mu, p.rating_sigma,
                 u.display_name, u.avatar_url,
                 pay.paid_at, pay.method AS paid_method,
+                pms.match_rating,
                 COALESCE(ev.goals, 0)   AS goals,
                 COALESCE(ev.assists, 0) AS assists
            FROM registrations r
@@ -392,6 +459,8 @@ export async function getMatchday(gameId, client) {
            JOIN users u   ON u.id = p.user_id
            LEFT JOIN game_payments pay
              ON pay.game_id = r.game_id AND pay.player_id = p.id AND pay.voided_at IS NULL
+           LEFT JOIN player_match_stats pms
+             ON pms.game_id = r.game_id AND pms.player_id = p.id
            LEFT JOIN LATERAL (
              SELECT COUNT(*) FILTER (WHERE e.type = 'goal' AND e.player_id = p.id)::int AS goals,
                     COUNT(*) FILTER (WHERE e.assist_id = p.id)::int                     AS assists
@@ -406,14 +475,18 @@ export async function getMatchday(gameId, client) {
       ),
       run.query(
         `SELECT gt.id AS team_id, gt.color, gt.strength,
-                tp.player_id, tp.assigned_position,
+                tp.player_id, tp.assigned_position, tp.slot_index,
+                pms.match_rating,
                 p.is_goalkeeper, p.jersey_name, p.rating_mu, u.display_name
            FROM game_teams gt
            LEFT JOIN team_players tp ON tp.team_id = gt.id
            LEFT JOIN players p ON p.id = tp.player_id
            LEFT JOIN users u ON u.id = p.user_id
+           LEFT JOIN player_match_stats pms
+             ON pms.game_id = gt.game_id AND pms.player_id = tp.player_id
           WHERE gt.game_id = $1
-          ORDER BY gt.color, tp.assigned_position`,
+          -- Where they are standing, not the alphabetical order of position codes.
+          ORDER BY gt.color, tp.slot_index NULLS LAST, tp.assigned_position`,
         [gameId]
       ),
       run.query(`SELECT team_id, color, score FROM game_live_score WHERE game_id = $1`, [gameId]),
@@ -443,6 +516,9 @@ export async function getMatchday(gameId, client) {
     paid: r.paid_at != null,
     paidAt: r.paid_at ?? null,
     paidMethod: r.paid_method ?? null,
+    // The admin's 1-10 opinion of this performance, if they have given one. Distinct
+    // from ratingMu, which is the Glicko number the engine derives.
+    rating: num(r.match_rating),
     goals: r.goals,
     assists: r.assists,
   });
@@ -465,7 +541,11 @@ export async function getMatchday(gameId, client) {
         id: r.player_id,
         name: r.jersey_name || r.display_name,
         position: r.assigned_position,
+        // Which place on the tactical board. Null means "on this team, not placed yet",
+        // which the client resolves to the first free slot.
+        slotIndex: r.slot_index,
         isGoalkeeper: r.is_goalkeeper,
+        rating: num(r.match_rating),
         ratingMu: num(r.rating_mu),
       });
     }
@@ -481,7 +561,9 @@ export async function getMatchday(gameId, client) {
     venue: g.venue_id
       ? {
           id: g.venue_id, name: g.venue_name, address: g.venue_address,
-          mapsUrl: g.venue_maps_url, logo_url: g.venue_logo,
+          mapsUrl: g.venue_maps_url,
+          hasLogo: !!g.venue_has_logo,
+          logoUrl: g.venue_has_logo ? venueLogoPath(g.venue_id, g.venue_updated_at) : null,
         }
       : null,
     kickoffAt: g.kickoff_at,
@@ -532,7 +614,16 @@ export async function getMatchday(gameId, client) {
       teamId: e.team_id, playerId: e.player_id, playerName: e.player_name, assistId: e.assist_id,
     })),
     motmPlayerId: awards.find((a) => a.award_type === 'motm')?.player_id ?? null,
-    lockedTeams: ['in_progress', 'completed'].includes(g.status),
+
+    // The SETTLED result, once one has been submitted, in the same shape every other
+    // screen reads. Distinct from `score` above, which is the live fold over goal
+    // events: during a match there is a score and no result, and after the admin files
+    // the result there is both, and they are allowed to differ if a score was corrected.
+    result: shapeResult(g),
+    // The admin's own choice, not a consequence of the clock. It used to be
+    // `status IN ('in_progress','completed')`, which made the tactical board read-only
+    // the instant a match kicked off, with an unlock button that did nothing.
+    lockedTeams: g.teams_locked,
 
     payments: {
       // The rail on the touchline: who still owes, and what has been collected.

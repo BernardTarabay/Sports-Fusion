@@ -24,7 +24,23 @@ import {
 } from '../components/football/index.jsx';
 import { Avatar } from '../components/ui/index.jsx';
 import { ShareableMatchCard } from '../components/players/index.jsx';
-import { time, dayAndDate, relativeDay, pad } from '../lib/format.js';
+import { time, dayAndDate, relativeDay, pad, placeOf } from '../lib/format.js';
+import { joinability } from '../lib/joinability.js';
+
+const teamLabel = (color) => (color ? color[0].toUpperCase() + color.slice(1) : null);
+
+// Why the join button is not there. Written for the person standing outside the pitch,
+// not for the developer: "registration closed" is a status, "this game is not taking
+// any more players" is an answer.
+const joinRefusal = (reason) => ({
+  cancelled: 'This game was called off.',
+  completed: 'This game has been played.',
+  in_progress: 'This game has already kicked off.',
+  started: 'This game has already kicked off.',
+  not_open: 'Registration for this game has not opened yet.',
+  closed: 'Registration for this game has closed.',
+  waitlist_full: 'The game and its waiting list are both full. Try another fixture.',
+}[reason] ?? 'You cannot join this game.');
 
 function KickoffClock({ target }) {
   const { days, hours, minutes, seconds, expired } = useCountdown(target);
@@ -149,7 +165,7 @@ export default function GameDetail() {
   const { idOrSlug } = useParams();
   const { data, isLoading, isError, refetch } = useGame(idOrSlug);
   const { isAuthenticated, player } = useSession();
-  const join = useJoinGame();
+  const joinMutation = useJoinGame();
   const leave = useLeaveGame();
 
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
@@ -168,13 +184,13 @@ export default function GameDetail() {
   const game = data.game;
   const kickoff = new Date(game.kickoffAt);
   const isPast = kickoff < new Date();
-  const isFull = game.confirmedCount >= game.capacity;
+  const join = joinability(game);
   const hasTeams = game.teams?.length === 2;
   const cancelled = game.status === 'cancelled';
 
   const share = async () => {
     const url = `${window.location.origin}/games/${game.slug ?? game.id}`;
-    const text = `${game.districtName} · ${dayAndDate(kickoff)} ${time(kickoff)} — ${
+    const text = `${game.venue?.name ?? game.districtName} · ${dayAndDate(kickoff)} ${time(kickoff)} — ${
       game.confirmedCount
     }/${game.capacity} players`;
     if (navigator.share) {
@@ -187,6 +203,18 @@ export default function GameDetail() {
   const primaryAction = () => {
     if (!isAuthenticated) return <Button to="/login" size="lg" className="w-full">Sign in to join</Button>;
     if (cancelled || isPast) return null;
+
+    // Registration is closed for a reason the player can act on -- or cannot. Either way
+    // saying so beats a button that 409s. Someone already in the game still gets their
+    // control below: leaving a game that has closed is a different question from joining
+    // one, and they are still on the list either way.
+    if (!join.canJoin && !game.isRegistered) {
+      return (
+        <p className="rounded-[var(--radius-md)] bg-[var(--bg-sunken)] px-4 py-3 text-center text-sm text-[var(--fg-secondary)]">
+          {joinRefusal(join.reason)}
+        </p>
+      );
+    }
 
     if (game.isRegistered) {
       return (
@@ -206,10 +234,10 @@ export default function GameDetail() {
       <Button
         size="lg"
         className="w-full"
-        loading={join.isPending}
-        onClick={() => join.mutate({ gameId: game.id })}
+        loading={joinMutation.isPending}
+        onClick={() => joinMutation.mutate({ gameId: game.id })}
       >
-        {isFull ? 'Join waiting list' : 'Join this game'}
+        {join.waitlistOnly ? 'Join waiting list' : 'Join this game'}
       </Button>
     );
   };
@@ -233,7 +261,9 @@ export default function GameDetail() {
                 <span className="text-sm text-[var(--fg-secondary)]">{relativeDay(kickoff)}</span>
               </div>
 
-              <h1 className="display text-4xl leading-none sm:text-6xl">{game.districtName}</h1>
+              <h1 className="display text-4xl leading-none sm:text-6xl">
+                {game.venue?.name ?? game.districtName}
+              </h1>
 
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-[var(--fg-secondary)]">
                 <span className="flex items-center gap-1.5">
@@ -242,11 +272,12 @@ export default function GameDetail() {
                 <span className="flex items-center gap-1.5 font-semibold text-[var(--fg-primary)]">
                   <Clock className="size-4" aria-hidden="true" /> {time(kickoff)}
                 </span>
-                {game.venue && (
-                  <span className="flex items-center gap-1.5">
-                    <MapPin className="size-4" aria-hidden="true" /> {game.venue.name}
-                  </span>
-                )}
+                {/* Locates the ground rather than naming it twice -- the venue is the
+                    heading above. */}
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="size-4" aria-hidden="true" />
+                  {placeOf(game)}
+                </span>
                 <span className="flex items-center gap-1.5">
                   <Users className="size-4" aria-hidden="true" /> {game.teamSize}-a-side
                 </span>
@@ -304,10 +335,10 @@ export default function GameDetail() {
           <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
             <p className="eyebrow mb-6 text-center">Full time</p>
             <ScoreLine
-              home="Black"
-              away="White"
-              homeScore={game.result.score.black}
-              awayScore={game.result.score.white}
+              home={teamLabel(game.result.home.color) ?? "Team A"}
+              away={teamLabel(game.result.away.color) ?? "Team B"}
+              homeScore={game.result.home.score}
+              awayScore={game.result.away.score}
               size="lg"
             />
             {game.result.motm && (

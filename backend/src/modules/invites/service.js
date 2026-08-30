@@ -23,7 +23,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import QRCode from 'qrcode';
 import { withTransaction, query } from '../../database/pool.js';
-import { NotFoundError, ConflictError, ValidationError } from '../../lib/errors.js';
+import { NotFoundError, ValidationError } from '../../lib/errors.js';
 import { issueSession, publicUser } from '../auth/service.js';
 import { registerPlayer } from '../registrations/service.js';
 import { logger } from '../../lib/logger.js';
@@ -107,17 +107,34 @@ export async function createInvite({
   });
 }
 
-export async function listInvites({ districtId }) {
+/**
+ * Invites, optionally narrowed to one district and always narrowed to what the caller
+ * administers.
+ *
+ * `scope` is null for a global admin and the caller's district list otherwise. A global
+ * invite -- one with no district -- is only ever visible to a global admin, because only
+ * a global admin can mint one.
+ */
+export async function listInvites({ districtId, scope = null }) {
   const { rows } = await query(
     `SELECT i.*, d.name AS district_name
        FROM player_invites i
        LEFT JOIN districts d ON d.id = i.district_id
       WHERE ($1::uuid IS NULL OR i.district_id = $1)
+        AND ($2::uuid[] IS NULL OR i.district_id = ANY($2))
       ORDER BY i.created_at DESC
       LIMIT 100`,
-    [districtId ?? null]
+    // `scope` of [] means "administers nothing" and must match nothing. Only null --
+    // a global admin -- lifts the restriction.
+    [districtId ?? null, scope]
   );
   return rows.map((r) => shape(r));
+}
+
+/** The district an invite belongs to, for the authorisation guard. */
+export async function districtOfInvite(inviteId) {
+  const { rows } = await query('SELECT district_id FROM player_invites WHERE id = $1', [inviteId]);
+  return rows[0]?.district_id ?? null;
 }
 
 export async function revokeInvite({ inviteId, actorUserId }) {

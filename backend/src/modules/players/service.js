@@ -2,6 +2,7 @@
 
 import { query, withTransaction } from '../../database/pool.js';
 import { NotFoundError, ConflictError, ValidationError } from '../../lib/errors.js';
+import { shapeResult, RESULT_COLUMNS, RESULT_JOINS } from '../games/service.js';
 
 // `client` lets this run on an open transaction; see the note in games/service.js.
 export async function getProfile(playerId, client) {
@@ -17,10 +18,26 @@ export async function getProfile(playerId, client) {
             rel.attendance_rate,
             (SELECT count(*)::int FROM match_awards ma
               WHERE ma.player_id = p.id AND ma.award_type = 'motm') AS motm_count,
-            (SELECT COALESCE(SUM(pms.goals), 0)::int FROM player_match_stats pms
-              WHERE pms.player_id = p.id) AS goals,
-            (SELECT COALESCE(SUM(pms.assists), 0)::int FROM player_match_stats pms
-              WHERE pms.player_id = p.id) AS assists
+            -- Goals live in TWO places and only one is normally filled in.
+            -- player_match_stats is written when an admin files a result with a
+            -- per-player stats array; nothing in the app does that. Goals are tapped in
+            -- on the matchday screen and land in match_events. Reading only the first
+            -- meant every profile showed 0 goals for a player who had scored all season.
+            --
+            -- GREATEST, never the sum: they are two records of the same fact, so adding
+            -- them would double-count any game that has both.
+            GREATEST(
+              (SELECT COALESCE(SUM(pms.goals), 0)::int FROM player_match_stats pms
+                WHERE pms.player_id = p.id),
+              (SELECT count(*)::int FROM match_events e
+                WHERE e.player_id = p.id AND e.type = 'goal' AND e.voided_at IS NULL)
+            ) AS goals,
+            GREATEST(
+              (SELECT COALESCE(SUM(pms.assists), 0)::int FROM player_match_stats pms
+                WHERE pms.player_id = p.id),
+              (SELECT count(*)::int FROM match_events e
+                WHERE e.assist_id = p.id AND e.voided_at IS NULL)
+            ) AS assists
        FROM players p
        JOIN users u ON u.id = p.user_id
        LEFT JOIN districts d ON d.id = p.home_district_id
@@ -58,7 +75,10 @@ export async function getProfile(playerId, client) {
       attended: Number(r.attended ?? 0),
       noShows: Number(r.no_shows ?? 0),
       lateCancellations: Number(r.late_cancellations ?? 0),
-      attendanceRate: r.attendance_rate == null ? null : Number(r.attendance_rate),
+      // A FRACTION, not a percentage. The view computes 0-100; every other rate this API
+      // returns -- a district's occupancy, the reliability board -- is 0-1, and the
+      // client's percent() multiplies by 100. Sending 75 there renders "7500%".
+      attendanceRate: r.attendance_rate == null ? null : Number(r.attendance_rate) / 100,
       motm: r.motm_count,
       goals: r.goals,
       assists: r.assists,
@@ -77,6 +97,18 @@ export async function playerIdForUser(userId) {
   const { rows } = await query('SELECT id FROM players WHERE user_id = $1', [userId]);
   if (rows.length === 0) throw new NotFoundError('Player profile');
   return rows[0].id;
+}
+
+/**
+ * The district a player answers to, for the authorisation guard.
+ *
+ * Their home district. Null when they have not set one, which requireDistrictAccess
+ * treats as "no district admin may touch this" -- correct, because a player with no
+ * district is nobody's local responsibility.
+ */
+export async function districtOfPlayer(playerId) {
+  const { rows } = await query('SELECT home_district_id FROM players WHERE id = $1', [playerId]);
+  return rows[0]?.home_district_id ?? null;
 }
 
 export async function updatePreferences({ playerId, patch }) {
@@ -167,30 +199,50 @@ export async function getRatingHistory(playerId, limit = 50) {
 
 export async function getGameHistory(playerId, limit = 25) {
   const { rows } = await query(
-    `SELECT g.id, g.kickoff_at, g.status, d.name AS district_name,
+    `SELECT g.id, g.kickoff_at, g.status, g.capacity, g.confirmed_count,
+            g.public_slug, g.title,
+            d.name AS district_name,
+            v.name AS venue_name,
             r.status AS registration_status, r.attendance,
             gt.color AS team_color,
-            mr.team_a_score, mr.team_b_score
+            -- Did THIS player take the award in THIS game? The match timeline draws a
+            -- badge for it and had no way of knowing.
+            EXISTS (SELECT 1 FROM match_awards ma
+                     WHERE ma.game_id = g.id AND ma.player_id = r.player_id
+                       AND ma.award_type = 'motm') AS won_motm,
+            ${RESULT_COLUMNS}
        FROM registrations r
        JOIN games g ON g.id = r.game_id
        JOIN districts d ON d.id = g.district_id
+       LEFT JOIN venues v ON v.id = g.venue_id
        LEFT JOIN team_players tp ON tp.game_id = g.id AND tp.player_id = r.player_id
        LEFT JOIN game_teams gt ON gt.id = tp.team_id
-       LEFT JOIN match_results mr ON mr.game_id = g.id AND mr.is_current
+       ${RESULT_JOINS}
       WHERE r.player_id = $1
       ORDER BY g.kickoff_at DESC
       LIMIT $2`,
     [playerId, limit]
   );
   return rows.map((r) => ({
+    // `id` as well as `gameId`: the history renders with GameCard, which is the same
+    // component the fixture list uses and which keys and links on `game.id`.
+    id: r.id,
     gameId: r.id,
     kickoffAt: r.kickoff_at,
     status: r.status,
+    title: r.title,
+    slug: r.public_slug,
+    capacity: r.capacity,
+    confirmedCount: r.confirmed_count,
     districtName: r.district_name,
+    venue: r.venue_name ? { name: r.venue_name } : null,
     registrationStatus: r.registration_status,
     attendance: r.attendance,
     teamColor: r.team_color,
-    score: r.team_a_score == null ? null : { a: r.team_a_score, b: r.team_b_score },
+    motm: r.won_motm,
+    // The same `result` object every other screen reads, rather than `{ a, b }` --
+    // which needed a lookup to mean anything and which nothing in the app understood.
+    result: shapeResult(r),
   }));
 }
 
@@ -318,3 +370,156 @@ export async function deletePlayer({ playerId, actorUserId }) {
     return { deleted: true, deactivated: false, id: playerId };
   });
 }
+
+/**
+ * Everything the player profile page renders, in one request.
+ *
+ * WHY THIS IS ONE FUNCTION AND NOT FOUR
+ *
+ * The page destructured `{ player, history, ratingHistory, achievements }` from the
+ * response and the endpoint answered with `{ player }` alone -- so the match timeline,
+ * the rating chart and the achievements tab were all rendering `undefined`. And the
+ * `player` it did send was nested (`rating.mu`, `career.goals`) while the page reads it
+ * flat (`ratingMu`, `goals`), so the hero showed "?" for a name it had been given and a
+ * dash for every number. The profile was, in effect, a blank template.
+ *
+ * The flat shape is the one the components take, and they are the reason it exists: a
+ * PlayerCard on a leaderboard row and a PlayerHero on a profile take the same object.
+ */
+export async function getPlayerPage(playerId) {
+  const [profile, history, ratingHistory, achievements, extras] = await Promise.all([
+    getProfile(playerId),
+    getGameHistory(playerId, 25),
+    getRatingHistory(playerId, 60),
+    listAchievements(playerId),
+    playerExtras(playerId),
+  ]);
+
+  return {
+    player: {
+      id: profile.id,
+      // `name` is what every component reads. The jersey name wins where there is one:
+      // it is what goes on the team sheet and what people call each other.
+      name: profile.jerseyName || profile.displayName,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      position: profile.preferredPosition,
+      secondaryPositions: profile.secondaryPositions,
+      preferredFoot: profile.preferredFoot,
+      isGoalkeeper: profile.isGoalkeeper,
+      districtId: profile.district?.id ?? null,
+      districtName: profile.district?.name ?? null,
+      status: profile.status,
+      joinedAt: profile.joinedAt,
+
+      ratingMu: profile.rating.mu,
+      ratingSigma: profile.rating.sigma,
+      isProvisional: profile.rating.isProvisional,
+      rank: extras.rank,
+
+      games: profile.career.registrations,
+      attended: profile.career.attended,
+      noShows: profile.career.noShows,
+      lateCancellations: profile.career.lateCancellations,
+      attendanceRate: profile.career.attendanceRate,
+      goals: profile.career.goals,
+      assists: profile.career.assists,
+      motm: profile.career.motm,
+      pointsBalance: profile.pointsBalance,
+
+      form: extras.form,
+      streak: extras.streak,
+
+      // Kept so a caller that wants the grouped view still has it. The page reads flat.
+      rating: profile.rating,
+      career: profile.career,
+    },
+    history,
+    // Oldest first. getRatingHistory answers newest-first, which is right for a list of
+    // changes and backwards for a chart that reads left to right.
+    ratingHistory: [...ratingHistory].reverse(),
+    achievements,
+  };
+}
+
+/** The achievement catalogue, annotated with what this player has earned. */
+async function listAchievements(playerId) {
+  const { rows } = await query(
+    `SELECT a.slug, a.name, a.description, a.icon, a.category, a.points_award, pa.earned_at
+       FROM achievements a
+       LEFT JOIN player_achievements pa
+         ON pa.achievement_id = a.id AND pa.player_id = $1
+      WHERE a.is_active
+      ORDER BY pa.earned_at DESC NULLS LAST, a.name`,
+    [playerId]
+  );
+  return rows.map((a) => ({
+    slug: a.slug,
+    name: a.name,
+    description: a.description,
+    icon: a.icon,
+    tier: a.category,
+    pointsAward: a.points_award,
+    earnedAt: a.earned_at,
+  }));
+}
+
+/**
+ * Rank, recent form, and the attendance streak.
+ *
+ * One query rather than three: they are three window functions over the same two tables
+ * and the profile page is a single screen.
+ */
+async function playerExtras(playerId) {
+  const { rows } = await query(
+    `WITH ranked AS (
+       -- The same ordering the overall leaderboard uses: conservative rating, and
+       -- provisional players are not ranked at all rather than ranked badly.
+       SELECT p.id,
+              rank() OVER (ORDER BY (p.rating_mu - 2 * p.rating_sigma) DESC) AS rank
+         FROM players p
+        WHERE p.status = 'active' AND p.rating_sigma <= 150
+     ),
+     recent AS (
+       SELECT pr.mu,
+              row_number() OVER (ORDER BY pr.effective_at DESC) AS n
+         FROM player_ratings pr
+        WHERE pr.player_id = $1 AND pr.source = 'match_result'
+     ),
+     appearances AS (
+       -- Newest first, so a run of 'attended' at the top is the current streak.
+       SELECT r.attendance,
+              row_number() OVER (ORDER BY g.kickoff_at DESC) AS n
+         FROM registrations r
+         JOIN games g ON g.id = r.game_id
+        WHERE r.player_id = $1 AND g.status = 'completed' AND r.status <> 'cancelled'
+     ),
+     broke AS (
+       SELECT COALESCE(min(n), 2147483647) AS at
+         FROM appearances
+        WHERE attendance IS DISTINCT FROM 'attended'
+     )
+     SELECT (SELECT rank FROM ranked WHERE id = $1)                       AS rank,
+            (SELECT array_agg(mu ORDER BY n DESC) FROM recent WHERE n <= 5) AS form,
+            (SELECT count(*)::int FROM appearances, broke
+              WHERE appearances.n < broke.at)                             AS streak`,
+    [playerId]
+  );
+  const r = rows[0] ?? {};
+
+  return {
+    rank: r.rank == null ? null : Number(r.rank),
+    // The 0-10 scale the FormStrip draws, oldest to newest.
+    form: (r.form ?? []).map((mu) => toPlayerScale(Number(mu))),
+    streak: r.streak ?? 0,
+  };
+}
+
+/**
+ * Internal rating to the 0-10 number players understand.
+ *
+ * Mirrors the frontend's toPlayerRating and the awards module's copy of it: 1500 sits at
+ * 6.5, and roughly one point per 150 rating.
+ */
+const toPlayerScale = (mu) =>
+  Math.max(1, Math.min(10, Math.round((6.5 + (mu - 1500) / 150) * 10) / 10));

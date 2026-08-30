@@ -21,6 +21,42 @@ const MIGRATIONS_DIR = path.join(root, 'database', 'migrations');
 
 let started;
 
+/**
+ * Bind the database socket to a port nobody else has.
+ *
+ * `node --test` runs suites in PARALLEL processes, one per core, and each boots its own
+ * harness. This used to be `5000 + random(2000)` with no check, which is a birthday
+ * problem: with a handful of suites a collision was unlikely enough to look like it
+ * worked, and adding three more made the whole run fail roughly one time in four --
+ * every test in the losing suite, with an error nowhere near the cause.
+ *
+ * A flaky suite is worse than a missing one. People learn to re-run it, and then they
+ * re-run it over a real failure too.
+ *
+ * PGLiteSocketServer keeps its port private, so port 0 is no help: there would be no way
+ * to read back what the OS chose. Instead: pick, try, and on EADDRINUSE pick again.
+ */
+async function listenOnAFreePort(db, attempts = 40) {
+  let lastError;
+  for (let i = 0; i < attempts; i += 1) {
+    // A wide range, and one that avoids the ports the dev database and the API use.
+    const port = 20_000 + Math.floor(Math.random() * 20_000);
+    const socketServer = new PGLiteSocketServer({ db, port, host: '127.0.0.1' });
+    try {
+      await socketServer.start();
+      return { port, socketServer };
+    } catch (err) {
+      lastError = err;
+      if (err?.code !== 'EADDRINUSE' && err?.cause?.code !== 'EADDRINUSE') throw err;
+      await socketServer.stop().catch(() => {});
+    }
+  }
+  throw new Error(
+    `could not find a free port for the test database after ${attempts} attempts`,
+    { cause: lastError }
+  );
+}
+
 /** Boot the database and the app exactly once per test process. */
 export async function startTestServer() {
   if (started) return started;
@@ -33,9 +69,7 @@ export async function startTestServer() {
     await db.exec(await readFile(path.join(MIGRATIONS_DIR, file), 'utf8'));
   }
 
-  const port = 5000 + Math.floor(Math.random() * 2000);
-  const socketServer = new PGLiteSocketServer({ db, port, host: '127.0.0.1' });
-  await socketServer.start();
+  const { port, socketServer } = await listenOnAFreePort(db);
 
   // Set config BEFORE importing anything that reads it. dotenv does not override
   // variables that are already present, so these win over .env.

@@ -15,7 +15,9 @@ import * as invites from './service.js';
 import * as phoneAuth from '../auth/phone.js';
 import { validate, asyncHandler } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { requireAdmin, requireDistrictAccess } from '../../middleware/authorize.js';
+import {
+  requireAdmin, requireDistrictAccess, isGlobalAdmin, adminDistrictIds,
+} from '../../middleware/authorize.js';
 import { setAuthCookies } from '../../lib/tokens.js';
 import { POSITIONS } from '../teams/formation.js';
 import config from '../../config/index.js';
@@ -75,13 +77,20 @@ adminRouter.post(
   })
 );
 
+// Creating an invite was district-scoped and listing them was not, so a district admin
+// could read every other district's links -- and revoking was not either, so they could
+// switch off somebody else's onboarding. A district admin sees their own districts; a
+// global admin sees everything.
 adminRouter.get(
   '/',
   authenticate,
   requireAdmin,
   validate({ query: z.object({ districtId: uuid.optional() }) }),
   asyncHandler(async (req, res) => {
-    res.json({ invites: await invites.listInvites({ districtId: req.query.districtId }) });
+    const scope = isGlobalAdmin(req.user) ? null : adminDistrictIds(req.user);
+    res.json({
+      invites: await invites.listInvites({ districtId: req.query.districtId, scope }),
+    });
   })
 );
 
@@ -90,6 +99,7 @@ adminRouter.delete(
   authenticate,
   requireAdmin,
   validate({ params: z.object({ id: uuid }) }),
+  requireDistrictAccess((req) => invites.districtOfInvite(req.params.id)),
   asyncHandler(async (req, res) => {
     res.json({ invite: await invites.revokeInvite({ inviteId: req.params.id, actorUserId: req.user.id }) });
   })

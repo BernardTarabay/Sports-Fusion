@@ -120,9 +120,17 @@ export async function svgToPngBlob(svg, {
   if (header) {
     let x = padding;
     if (badge) {
-      // Loaded from a data URI, so the canvas stays untainted and toBlob still works.
-      // A remote logo would produce a SecurityError here and no image at all -- which is
-      // why venues.logo_url is constrained to inline data.
+      // SAME-ORIGIN, which is what keeps this working.
+      //
+      // Drawing a cross-origin image taints the canvas: toBlob() then throws a
+      // SecurityError and there is no picture at all. The badge used to be a data URI --
+      // same-origin by definition -- which solved that and cost 50-60 KB on every game in
+      // every list (see backend/src/modules/venues/routes.js). It now arrives as
+      // `/api/venues/:id/logo`, a relative path, and both deployments serve /api from the
+      // web origin, so it is still same-origin and the canvas is still clean.
+      //
+      // No crossOrigin attribute on purpose: setting it would turn a same-origin fetch
+      // into a CORS one and reintroduce the very failure this is avoiding.
       const logo = await new Promise((resolve) => {
         const img = new Image();
         img.onload = () => resolve(img);

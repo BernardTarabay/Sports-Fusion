@@ -65,8 +65,8 @@ function VenueRow({ districtId, venue, onChanged }) {
           {venue.address ?? 'No address'}
         </p>
         <p className="mt-0.5 flex items-center gap-2 text-xs text-[var(--fg-muted)]">
-          {venue.pitch_type && <Badge tone="neutral" size="sm">{venue.pitch_type}</Badge>}
-          {venue.default_capacity ? `${venue.default_capacity} players` : null}
+          {venue.pitchType && <Badge tone="neutral" size="sm">{venue.pitchType}</Badge>}
+          {venue.capacity ? `${venue.capacity} players` : null}
         </p>
       </div>
 
@@ -81,7 +81,7 @@ function VenueRow({ districtId, venue, onChanged }) {
           ].filter(Boolean).join(' ')}
         >
           <Upload className="size-4" aria-hidden />
-          {venue.logo_url ? 'Replace' : 'Add badge'}
+          {venue.logoUrl ? 'Replace' : 'Add badge'}
           <input
             type="file"
             accept="image/png,image/jpeg,image/webp,image/svg+xml"
@@ -90,7 +90,7 @@ function VenueRow({ districtId, venue, onChanged }) {
           />
         </label>
 
-        {venue.logo_url && (
+        {venue.logoUrl && (
           <Button variant="ghost" size="sm" onClick={clear} loading={busy} aria-label={`Remove ${venue.name} badge`}>
             <Trash2 className="size-4" aria-hidden />
           </Button>

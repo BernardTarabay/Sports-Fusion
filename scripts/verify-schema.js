@@ -383,6 +383,135 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
+  // 021: awards and payments belong to somebody who was actually in the game.
+  // ---------------------------------------------------------------------------
+
+  await check('there is exactly one man of the match', async () => {
+    // (game_id, award_type, player_id) permitted two players to share it, which is wrong
+    // on its own terms AND makes any query joining a game to its award return that
+    // fixture twice in a list.
+    await db.query(
+      `INSERT INTO match_awards (game_id, player_id, award_type)
+       VALUES ($1, $2, 'motm')`,
+      [GAME, playerId(1)]
+    );
+    await expectRejection(
+      db,
+      `INSERT INTO match_awards (game_id, player_id, award_type)
+       VALUES ($1, $2, 'motm')`,
+      [GAME, playerId(2)],
+      /match_awards_one_motm_per_game|duplicate key/i
+    );
+  });
+
+  await check('other awards may still be shared', async () => {
+    // Two players can score the same best goal between them. Only motm is singular.
+    await db.query(
+      `INSERT INTO match_awards (game_id, player_id, award_type)
+       VALUES ($1, $2, 'best_goal'), ($1, $3, 'best_goal')`,
+      [GAME, playerId(3), playerId(4)]
+    );
+  });
+
+  await check('an award cannot name somebody who is not on the roster', async () => {
+    // The endpoints take a playerId from the request body. An admin with a stale tab or
+    // a copied id could hand the award to somebody who never played.
+    await expectRejection(
+      db,
+      `INSERT INTO match_awards (game_id, player_id, award_type)
+       VALUES ($1, $2, 'best_player')`,
+      [GAME, playerId(30)],
+      /not on the roster/i
+    );
+  });
+
+  await check('a payment cannot be recorded against somebody who is not on the roster', async () => {
+    // Money attributed to the wrong person, with nothing to catch it.
+    await expectRejection(
+      db,
+      `INSERT INTO game_payments (game_id, player_id, amount, currency)
+       VALUES ($1, $2, 10, 'USD')`,
+      [GAME, playerId(30)],
+      /not on the roster/i
+    );
+  });
+
+  await check('a payment for somebody who IS on the roster is accepted', async () => {
+    // The mirror. A constraint that refuses everything passes the test above and breaks
+    // the only thing an admin does on the touchline.
+    await db.query(
+      `INSERT INTO game_payments (game_id, player_id, amount, currency)
+       VALUES ($1, $2, 10, 'USD')`,
+      [GAME, playerId(1)]
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // 022/023: the tactical board is stored, and the lock is a choice.
+  // ---------------------------------------------------------------------------
+
+  // Its own game and its own teams. The main fixture has already spent its team colours
+  // and put every player on a side, and (game_id, player_id) is unique.
+  const BOARD_GAME = '55555555-5555-5555-5555-555555555555';
+  await db.query(
+    `INSERT INTO games (id, district_id, kickoff_at, capacity, team_size, status)
+     VALUES ($1, '11111111-1111-1111-1111-111111111111',
+             now() + interval '5 days', 22, 11, 'registration_open')`,
+    [BOARD_GAME]
+  );
+  const { rows: boardTeams } = await db.query(
+    `INSERT INTO game_teams (game_id, color) VALUES ($1, 'black'), ($1, 'white')
+     RETURNING id, color`,
+    [BOARD_GAME]
+  );
+  const boardTeam = (colour) => boardTeams.find((t) => t.color === colour).id;
+
+  await check('two players cannot stand in the same place', async () => {
+    await db.query(
+      `INSERT INTO team_players (team_id, game_id, player_id, slot_index)
+       VALUES ($1, $2, $3, 4)`,
+      [boardTeam('black'), BOARD_GAME, playerId(1)]
+    );
+    await expectRejection(
+      db,
+      `INSERT INTO team_players (team_id, game_id, player_id, slot_index)
+       VALUES ($1, $2, $3, 4)`,
+      [boardTeam('black'), BOARD_GAME, playerId(2)],
+      /team_players_one_player_per_slot|duplicate key/i
+    );
+  });
+
+  await check('any number of players may be waiting to be placed', async () => {
+    // NULL means "on this team, not on the board yet" -- a displaced player, or one
+    // added by a path that knows nothing about formations. The partial index has to
+    // allow more than one of those.
+    await db.query(
+      `INSERT INTO team_players (team_id, game_id, player_id, slot_index)
+       VALUES ($1, $2, $3, NULL), ($1, $2, $4, NULL)`,
+      [boardTeam('white'), BOARD_GAME, playerId(3), playerId(4)]
+    );
+  });
+
+  await check('a match rating has to be a rating', async () => {
+    await expectRejection(
+      db,
+      `INSERT INTO player_match_stats (game_id, player_id, match_rating)
+       VALUES ($1, $2, 44)`,
+      [GAME, playerId(5)],
+      /player_match_stats_rating_range/i
+    );
+  });
+
+  await check('the team lock is stored, not derived from status', async () => {
+    const { rows } = await db.query(
+      `SELECT teams_locked FROM games WHERE id = $1`, [GAME]
+    );
+    if (rows[0].teams_locked !== false) {
+      throw new Error('a game should not start out with its team sheet locked');
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   const tables = await db.query(
     `SELECT count(*)::int AS n FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`

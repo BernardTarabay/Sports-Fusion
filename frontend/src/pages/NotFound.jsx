@@ -1,4 +1,3 @@
-import { Link } from 'react-router';
 import { Button } from '../components/ui/index.jsx';
 
 export default function NotFound() {

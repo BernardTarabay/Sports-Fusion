@@ -19,11 +19,11 @@ import {
   Sparkles, Send, X, Check, AlertTriangle, Loader2, ChevronDown, History, Bot,
 } from 'lucide-react';
 import { cn } from '../../lib/cn.js';
-import { Badge, Button, Card } from '../ui/index.jsx';
+import { Button, Card } from '../ui/index.jsx';
 import { interpret, resolveTool } from '../../ai/interpreter.js';
 import { RISK } from '../../ai/tools.js';
 import { aiService } from '../../api/services.js';
-import { relativeTime, time, dayAndDate } from '../../lib/format.js';
+import { relativeTime } from '../../lib/format.js';
 
 const SUGGESTIONS = [
   'Who hasn’t paid?',

@@ -12,11 +12,15 @@ import { ArrowRight, MapPin, Users, Trophy, Zap } from 'lucide-react';
 import { useGames, useDistricts, useLeaderboard, useCountdown, useCountUp } from '../hooks/index.js';
 import { Button, Card, SectionHeading, Badge } from '../components/ui/index.jsx';
 import { GameCard, GameCardSkeleton } from '../components/games/GameCard.jsx';
-import { CapacityMeter, ScoreLine, RatingBadge } from '../components/football/index.jsx';
+import { CapacityMeter, ScoreLine } from '../components/football/index.jsx';
 import { PlayerCard } from '../components/players/index.jsx';
 import { LogoMark } from '../components/shared/Logo.jsx';
 import { useSession } from '../state/session.jsx';
-import { time, dayName, compact, pad, relativeDay } from '../lib/format.js';
+import { time, dayName, compact, pad, relativeDay, percent, placeOf } from '../lib/format.js';
+import { joinability } from '../lib/joinability.js';
+import { CommunityLinks } from '../components/shared/Social.jsx';
+
+const teamLabel = (color) => (color ? color[0].toUpperCase() + color.slice(1) : null);
 
 function Countdown({ target }) {
   const { days, hours, minutes, seconds, expired } = useCountdown(target);
@@ -80,8 +84,8 @@ function Hero({ featured }) {
                 Find a game <ArrowRight className="size-4" />
               </Button>
               {isAuthenticated ? (
-                <Button to="/matchday" variant="secondary" size="lg">
-                  Your matchday
+                <Button to="/my-game" variant="secondary" size="lg">
+                  Your game
                 </Button>
               ) : (
                 <Button to="/districts" variant="secondary" size="lg">
@@ -101,13 +105,15 @@ function Hero({ featured }) {
               </div>
 
               <div className="p-5 sm:p-6">
-                <p className="display text-4xl sm:text-5xl leading-none">{featured.districtName}</p>
-                {featured.venue && (
-                  <p className="mt-2 flex items-center gap-1.5 text-sm text-[var(--fg-secondary)]">
-                    <MapPin className="size-4" aria-hidden="true" />
-                    {featured.venue.name}
-                  </p>
-                )}
+                {/* The ground, not the caza. Nobody drives to a district. */}
+                <p className="display text-4xl sm:text-5xl leading-none">
+                  {featured.venue?.name ?? featured.districtName}
+                </p>
+                {/* Places the ground rather than repeating it: the venue is the heading. */}
+                <p className="mt-2 flex items-center gap-1.5 text-sm text-[var(--fg-secondary)]">
+                  <MapPin className="size-4" aria-hidden="true" />
+                  {placeOf(featured)}
+                </p>
 
                 <p className="display mt-5 text-2xl">{dayName(featured.kickoffAt)} · {time(featured.kickoffAt)}</p>
 
@@ -123,8 +129,17 @@ function Hero({ featured }) {
                   />
                 </div>
 
-                <Button to={`/games/${featured.slug ?? featured.id}`} className="mt-5 w-full" size="lg">
-                  {featured.confirmedCount >= featured.capacity ? 'Join waiting list' : 'Join this game'}
+                {/* The same rule the fixture card and the game page use, so the front
+                    door cannot advertise joining a match that has already kicked off. */}
+                <Button
+                  to={`/games/${featured.slug ?? featured.id}`}
+                  variant={joinability(featured).canJoin ? 'primary' : 'secondary'}
+                  className="mt-5 w-full"
+                  size="lg"
+                >
+                  {joinability(featured).canJoin
+                    ? joinability(featured).label
+                    : `${joinability(featured).label} · see the game`}
                 </Button>
               </div>
             </Card>
@@ -143,7 +158,9 @@ function LiveStats({ platform }) {
     { label: 'Players', value: compact(Math.round(players)), icon: Users },
     { label: 'Districts', value: platform?.districts ?? '—', icon: MapPin },
     { label: 'Games this month', value: Math.round(games), icon: Zap },
-    { label: 'Average occupancy', value: `${Math.round((platform?.avgOccupancy ?? 0) * 100)}%`, icon: Trophy },
+    // A dash, not 0%, when nothing has been played yet. "0% average occupancy" reads as
+    // "nobody comes to these games"; the truth is that there is nothing to average.
+    { label: 'Average occupancy', value: percent(platform?.avgOccupancy), icon: Trophy },
   ];
 
   return (
@@ -175,9 +192,12 @@ export default function Landing() {
 
   const upcoming = gamesData?.games ?? [];
   const featured = upcoming.find((g) => g.status !== 'cancelled');
+  // Teams are named by shirt colour, and the balancer can hand out six of them, so the
+  // scoreline is read positionally rather than by looking up a `black` key that only
+  // exists in two-team games.
   const recent = (pastData?.games ?? []).filter((g) => g.result).slice(0, 3);
   const matchOfWeek = recent.find(
-    (g) => Math.abs(g.result.score.black - g.result.score.white) <= 1 && g.result.motm
+    (g) => Math.abs(g.result.home.score - g.result.away.score) <= 1 && g.result.motm
   ) ?? recent[0];
 
   return (
@@ -221,11 +241,11 @@ export default function Landing() {
                 <div className="mt-4 space-y-1.5">
                   <p className="flex items-baseline justify-between text-xs">
                     <span className="text-[var(--fg-secondary)]">Games</span>
-                    <span className="display text-lg tnum">{district.activeGames}</span>
+                    <span className="display text-lg tnum">{district.activeGames ?? 0}</span>
                   </p>
                   <p className="flex items-baseline justify-between text-xs">
                     <span className="text-[var(--fg-secondary)]">Players</span>
-                    <span className="display text-lg tnum">{compact(district.players * 32)}</span>
+                    <span className="display text-lg tnum">{compact(district.players)}</span>
                   </p>
                 </div>
               </Link>
@@ -243,15 +263,15 @@ export default function Landing() {
               <Card className="overflow-hidden">
                 <div className="bg-[var(--bg-sunken)] px-5 py-2.5">
                   <p className="eyebrow text-[0.625rem]">
-                    {matchOfWeek.districtName} · {relativeDay(matchOfWeek.kickoffAt)}
+                    {matchOfWeek.venue?.name ?? matchOfWeek.districtName} · {relativeDay(matchOfWeek.kickoffAt)}
                   </p>
                 </div>
                 <div className="p-6 sm:p-8">
                   <ScoreLine
-                    home="Black"
-                    away="White"
-                    homeScore={matchOfWeek.result.score.black}
-                    awayScore={matchOfWeek.result.score.white}
+                    home={teamLabel(matchOfWeek.result.home.color) ?? "Team A"}
+                    away={teamLabel(matchOfWeek.result.away.color) ?? "Team B"}
+                    homeScore={matchOfWeek.result.home.score}
+                    awayScore={matchOfWeek.result.away.score}
                     size="lg"
                   />
                   {matchOfWeek.result.motm && (
@@ -260,7 +280,6 @@ export default function Landing() {
                         <Trophy className="size-3" aria-hidden="true" /> Man of the Match
                       </Badge>
                       <span className="display text-2xl">{matchOfWeek.result.motm.name}</span>
-                      <RatingBadge mu={1500 + (matchOfWeek.result.motm.rating - 6.5) * 150} sigma={50} />
                     </div>
                   )}
                   <Button
@@ -296,6 +315,22 @@ export default function Landing() {
               ))}
             </Card>
           </div>
+        </div>
+      </section>
+
+      {/* Where the rest of Sports Fusion is.
+
+          The WhatsApp group is not a social link in the marketing sense -- it is where
+          this league actually happened before any of this existed, and it is still where
+          most people hear that a game is on. The honest thing for the site to do is point
+          at it rather than pretend it replaced it. */}
+      <section className="border-t border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+        <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16">
+          <SectionHeading
+            eyebrow="Off the pitch"
+            title="Find us everywhere else"
+          />
+          <CommunityLinks />
         </div>
       </section>
 

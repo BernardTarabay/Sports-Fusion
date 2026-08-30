@@ -20,9 +20,13 @@ export function SessionProvider({ children }) {
 
   const restore = useCallback(async () => {
     try {
-      const { user: me, player: profile } = await authService.me();
+      // The football profile is nested INSIDE the user -- /auth/me answers with
+      // `{ user: { ..., player } }`. Destructuring `player` off the top level, which is
+      // what this did, silently produced null for every signed-in player, so anything
+      // that asked the session who it was playing as got nothing.
+      const { user: me } = await authService.me();
       setUser(me);
-      setPlayer(profile ?? null);
+      setPlayer(me?.player ?? null);
       setStatus('authenticated');
     } catch {
       setUser(null);

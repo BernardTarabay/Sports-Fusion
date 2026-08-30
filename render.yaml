@@ -21,7 +21,22 @@ services:
     branch: main
 
     buildCommand: npm ci
-    startCommand: npm start --workspace=backend
+
+    # MIGRATE, THEN SERVE.
+    #
+    # Not a convenience: the API selects columns that migrations add, so a deploy that
+    # ships new code against an un-migrated database does not degrade, it 500s on every
+    # request. Running it here means the schema is always at least as new as the code
+    # that is about to read it.
+    #
+    # `migrate` is a no-op costing one round trip when there is nothing pending, it
+    # applies each file in its own transaction, and it takes a Postgres advisory lock so
+    # two instances booting together cannot race. If a migration fails the process exits
+    # non-zero, the deploy fails, and Render keeps the previous version serving.
+    #
+    # Render's pre-deploy hook would be the tidier home for this, but it is a paid-plan
+    # feature and this service is on free.
+    startCommand: npm run migrate && npm start --workspace=backend
 
     # Liveness, not readiness. Gating the deploy on /health -- which queries Postgres --
     # meant a database that would not answer showed up as a deploy stuck "in progress"
@@ -51,8 +66,15 @@ services:
       - key: DATABASE_POOL_MAX
         value: "2"
 
-      # Login codes go to the server log until these are set, which means nobody can
-      # sign in by phone. The seeded admin password still works.
+      # Phone sign-in is OFF until a provider is configured.
+      #
+      # With none, /api/auth/phone/start answers 503 rather than issuing a code, because
+      # the only other options are to send it nowhere or to return it in the response --
+      # and returning it means anyone who knows a number owns that account. The seeded
+      # admin password still works, so the league is reachable either way.
+      #
+      # To switch it on: set OTP_PROVIDER=whatsapp with WHATSAPP_PHONE_NUMBER_ID and
+      # WHATSAPP_ACCESS_TOKEN, or OTP_PROVIDER=twilio with the Twilio credentials.
       - key: WHATSAPP_ENABLED
         value: "false"
 

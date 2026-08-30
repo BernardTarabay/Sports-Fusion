@@ -45,7 +45,10 @@ const submitSchema = z.object({
   scores: z.array(scoreEntry).min(2).max(4),
   // Only the exceptions. Everyone else confirmed is marked present.
   attendance: z.array(attendanceEntry).max(40).default([]),
-  awards: z.array(awardEntry).max(10).default([]),
+  // NO DEFAULT. An omitted awards list means "do not touch the awards"; defaulting it
+  // to [] made filing a result wipe the man of the match that had just been set on the
+  // matchday screen -- which is the step immediately before this one.
+  awards: z.array(awardEntry).max(10).optional(),
   stats: z.array(statEntry).max(40).default([]),
 });
 

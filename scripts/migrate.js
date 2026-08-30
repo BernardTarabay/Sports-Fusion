@@ -32,6 +32,17 @@ async function main() {
   await client.connect();
 
   try {
+    // ONE MIGRATOR AT A TIME.
+    //
+    // This runs from the API's start command on deploy, so two instances booting
+    // together would otherwise both read "pending" and both try to apply the same
+    // CREATE INDEX. A session-level advisory lock serialises them: the second waits,
+    // then finds nothing to do. The number is arbitrary but must never change.
+    //
+    // Session-level rather than transaction-level, because each migration gets its own
+    // transaction below and the lock has to outlive all of them.
+    if (!statusOnly) await client.query('SELECT pg_advisory_lock(4820163)');
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version    TEXT PRIMARY KEY,

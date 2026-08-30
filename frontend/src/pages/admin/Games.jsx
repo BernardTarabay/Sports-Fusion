@@ -15,7 +15,6 @@ import { CapacityMeter, GameStatusChip, RatingBadge, PositionChip } from '../../
 import { Avatar } from '../../components/ui/index.jsx';
 import { BarSeries, Donut } from '../../components/charts/index.jsx';
 import { relativeDay, time, percent, compact } from '../../lib/format.js';
-import { cn } from '../../lib/cn.js';
 
 function GamesTable() {
   const [when, setWhen] = useState('upcoming');
@@ -59,7 +58,12 @@ function GamesTable() {
                     <p className="font-medium">{relativeDay(game.kickoffAt)}</p>
                     <p className="text-xs text-[var(--fg-muted)] tnum">{time(game.kickoffAt)}</p>
                   </td>
-                  <td className="px-4 py-3 font-medium">{game.districtName}</td>
+                  <td className="px-4 py-3 font-medium">
+                    {game.venue?.name ?? game.districtName}
+                    <span className="ml-1.5 text-xs font-normal text-[var(--fg-muted)]">
+                      {game.districtName}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-[var(--fg-secondary)]">{game.venue?.name ?? '—'}</td>
                   <td className="w-40 px-4 py-3">
                     <CapacityMeter

@@ -19,10 +19,10 @@ import {
 import { toast } from 'sonner';
 import { useGames, useMatchday, useCountdown, keys } from '../hooks/index.js';
 import { useSession } from '../state/session.jsx';
-import { matchdayService, adminService, gameService } from '../api/services.js';
+import { matchdayService, adminService } from '../api/services.js';
 import { fitSquadToFormation, defaultFormation } from '../lib/formations.js';
 import { cn } from '../lib/cn.js';
-import { time, dayAndDate, relativeDay, pad } from '../lib/format.js';
+import { time, dayAndDate, relativeDay, pad, placeOf } from '../lib/format.js';
 import {
   Button, Card, Badge, Skeleton, ErrorState, EmptyState, Modal, Avatar,
 } from '../components/ui/index.jsx';
@@ -225,7 +225,9 @@ export default function Matchday() {
         })),
         size,
         formation
-      ),
+      // fitSquadToFormation returns players in slot order. Stamp that order on, because
+      // the board reads slotIndex now rather than inferring position from array index.
+      ).map((p, slotIndex) => ({ ...p, slotIndex })),
     }));
   }, [game, formation]);
 
@@ -288,9 +290,20 @@ export default function Matchday() {
     applyGame(next);
   };
 
-  const setScore = async (score) => {
-    const { game: next } = await matchdayService.setScore(game.id, score);
-    applyGame(next);
+  /**
+   * A goal, recorded against the player who scored it.
+   *
+   * There is no setScore. The server folds the score out of goal events on purpose, so
+   * the scoreboard and the scorer list cannot contradict each other -- which means the
+   * way to change the score is to say who scored. This is the same call the player
+   * sheet's goal stepper makes; the scoreboard is just a second way to reach it.
+   */
+  const setGoals = async (playerId, goals) => {
+    try {
+      await patchPlayer(playerId, { goals });
+    } catch (error) {
+      toast.error(error.message);
+    }
   };
 
   /** Remember the current teams before changing them. */
@@ -336,8 +349,8 @@ export default function Matchday() {
     // relabelling them. Anyone already in a slot that survives stays put.
     const refitted = teams.map((team) => ({
       ...team,
-      players: fitSquadToFormation(team.players, game.teamSize, value).map((p) => ({
-        ...p, position: p.slot?.label ?? p.position,
+      players: fitSquadToFormation(team.players, game.teamSize, value).map((p, slotIndex) => ({
+        ...p, position: p.slot?.label ?? p.position, slotIndex,
       })),
     }));
     const { game: withFormation } = await matchdayService.setFormation(game.id, value);
@@ -345,6 +358,22 @@ export default function Matchday() {
     applyGame({ ...withFormation, ...next, formation: value });
   };
 
+  /**
+   * Drop a player onto a position.
+   *
+   * A SLOT IS A PLACE, NOT AN ARRAY INDEX.
+   *
+   * This used to treat `team.players` as a dense list whose index was the position, and
+   * it had two consequences an admin met immediately. Dropping onto an empty slot in
+   * your own team did nothing at all -- the same-side branch only acted `if (occupant)`.
+   * And dropping onto an empty slot in the OTHER team appended the player to the end of
+   * that list rather than putting them where they were dropped, so aiming for the far
+   * post put them wherever the next index happened to be.
+   *
+   * Players now carry their own `slotIndex`, so a gap between two players is a real
+   * place and both cases are the same case: put this player here, and if somebody was
+   * already there, they take the vacated spot.
+   */
   const movePlayer = async (playerId, { teamId, slotIndex }) => {
     if (locked) { toast.error('Teams are locked. Unlock them to make changes.'); return; }
 
@@ -353,42 +382,34 @@ export default function Matchday() {
     if (!fromTeam || !toTeam) return;
 
     const player = fromTeam.players.find((p) => p.id === playerId);
-    const occupant = toTeam.players[slotIndex];
-
-    pushHistory(
-      occupant && occupant.id !== playerId
-        ? `${player.name} and ${occupant.name} swapped back`
-        : `${player.name} moved back`
+    const fromSlot = player?.slotIndex;
+    const occupant = toTeam.players.find(
+      (p) => p.slotIndex === slotIndex && p.id !== playerId
     );
 
+    if (fromTeam.id === toTeam.id && fromSlot === slotIndex) return;
+
+    pushHistory(
+      occupant ? `${player.name} and ${occupant.name} swapped back` : `${player.name} moved back`
+    );
+
+    const moved = { ...player, slotIndex, teamId: toTeam.id };
+    // The displaced player takes the slot the mover just left. When the mover had no
+    // slot of its own there is nothing to hand over, so they are left unplaced and the
+    // server settles them into the lowest free position.
+    const displaced = occupant
+      ? { ...occupant, slotIndex: fromSlot ?? null, teamId: fromTeam.id, isManualOverride: true }
+      : null;
+
     const next = teams.map((team) => {
-      const players = [...team.players];
-
-      if (team.id === fromTeam.id && team.id === toTeam.id) {
-        // Same side: swap the two slots.
-        const fromIndex = players.findIndex((p) => p.id === playerId);
-        if (occupant && fromIndex !== -1) {
-          players[fromIndex] = occupant;
-          players[slotIndex] = player;
-        }
-        return { ...team, players };
-      }
-
-      if (team.id === fromTeam.id) {
-        const filtered = players.filter((p) => p.id !== playerId);
-        // A straight swap keeps both sides the same size.
-        if (occupant) filtered.push({ ...occupant, isManualOverride: true });
-        return { ...team, players: filtered };
-      }
-
+      let players = team.players.filter(
+        (p) => p.id !== playerId && (!displaced || p.id !== displaced.id)
+      );
       if (team.id === toTeam.id) {
-        const updated = [...players];
-        if (occupant) updated[slotIndex] = { ...player, isManualOverride: true };
-        else updated.push({ ...player, isManualOverride: true });
-        return { ...team, players: updated };
+        players = [...players, fromTeam.id === toTeam.id ? moved : { ...moved, isManualOverride: true }];
       }
-
-      return team;
+      if (displaced && team.id === fromTeam.id) players = [...players, displaced];
+      return { ...team, players: players.sort((a, b) => (a.slotIndex ?? 99) - (b.slotIndex ?? 99)) };
     });
 
     applyGame({ ...game, teams: next });
@@ -429,12 +450,13 @@ export default function Matchday() {
   };
 
   const toggleLock = async () => {
-    const { game: next } = await matchdayService.setStatus(
-      game.id, game.status === 'teams_generated' ? 'teams_generated' : game.status,
-      { locked: !locked }
-    );
+    const { game: next } = await matchdayService.setTeamsLocked(game.id, !locked);
     applyGame(next);
-    toast.success(locked ? 'Teams unlocked' : 'Teams locked');
+    toast.success(locked ? 'Teams unlocked' : 'Teams locked', {
+      description: locked
+        ? 'You can move players again.'
+        : 'The team sheet is protected against a stray tap.',
+    });
   };
 
   const cancelGame = async (reason) => {
@@ -479,7 +501,7 @@ export default function Matchday() {
         // Read from the page rather than hardcoded, so the export matches the theme the
         // admin is looking at instead of always coming out dark.
         background: getComputedStyle(document.body).backgroundColor || '#0A0F0D',
-        badge: game.venue?.logo_url ?? null,
+        badge: game.venue?.logoUrl ?? null,
         caption: [
           game.venue?.name ?? game.districtName,
           dayAndDate(game.kickoffAt),
@@ -492,7 +514,7 @@ export default function Matchday() {
       const result = await sharePng(blob, {
         filename: exportFilename(game),
         title: 'Sports Fusion',
-        text: `${game.districtName} · ${dayAndDate(game.kickoffAt)} ${time(game.kickoffAt)}`,
+        text: `${game.venue?.name ?? game.districtName} · ${dayAndDate(game.kickoffAt)} ${time(game.kickoffAt)}`,
       });
       if (result === 'downloaded') {
         toast.success('Image saved', { description: 'Drag it into WhatsApp Web.' });
@@ -508,7 +530,7 @@ export default function Matchday() {
 
   const share = async () => {
     const url = `${window.location.origin}/g/${game.slug ?? game.id}`;
-    const text = `⚽ ${game.districtName} · ${dayAndDate(game.kickoffAt)} ${time(game.kickoffAt)}\n${game.confirmedCount}/${game.capacity} players`;
+    const text = `⚽ ${game.venue?.name ?? game.districtName} · ${dayAndDate(game.kickoffAt)} ${time(game.kickoffAt)}\n${game.confirmedCount}/${game.capacity} players`;
     if (navigator.share) {
       try { await navigator.share({ title: 'Sports Fusion', text, url }); return; } catch { /* cancelled */ }
     }
@@ -521,7 +543,7 @@ export default function Matchday() {
   const aiContext = useMemo(
     () => ({
       gameId: game?.id,
-      gameLabel: game ? `${game.districtName} · ${relativeDay(game.kickoffAt)} ${time(game.kickoffAt)}` : null,
+      gameLabel: game ? `${game.venue?.name ?? game.districtName} · ${relativeDay(game.kickoffAt)} ${time(game.kickoffAt)}` : null,
       confirmedCount: game?.confirmedCount,
       game,
       actorName: user?.displayName,
@@ -573,7 +595,10 @@ export default function Matchday() {
 
   const kickoff = new Date(game.kickoffAt);
   const isFull = game.confirmedCount >= game.capacity;
-  const hasTeams = teams.length === 2;
+  // >= 2, not === 2. The API accepts teamCount up to 4 and the balancer has six shirt
+  // colours, so an exact match meant a three-team game rendered as if the balancer had
+  // never run: no pitch, no scoreboard, no team sheet.
+  const hasTeams = teams.length >= 2;
 
   return (
     <div className="flex">
@@ -598,7 +623,9 @@ export default function Matchday() {
             {/* Collapsed, the header is one line: which game, and a way back to the rest. */}
             {!showDetails && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="display text-2xl leading-none">{game.districtName}</span>
+                <span className="display text-2xl leading-none">
+                  {game.venue?.name ?? game.districtName}
+                </span>
                 {game.venue && (
                   <span className="text-sm text-[var(--fg-secondary)]">{game.venue.name}</span>
                 )}
@@ -630,27 +657,32 @@ export default function Matchday() {
                   )}
                 </div>
 
-                <h1 className="display text-4xl leading-none sm:text-6xl">{game.districtName}</h1>
+                <h1 className="display text-4xl leading-none sm:text-6xl">
+                  {game.venue?.name ?? game.districtName}
+                </h1>
 
                 <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--fg-secondary)]">
                   <span className="flex items-center gap-1.5 font-semibold text-[var(--fg-primary)]">
                     <Clock className="size-4" aria-hidden="true" /> {time(kickoff)}
                   </span>
-                  {game.venue && (
-                    <span className="flex items-center gap-1.5">
-                      {/* The badge replaces the pin when there is one -- two marks for
-                          one venue is clutter. */}
-                      {game.venue.logo_url
-                        ? <VenueBadge venue={game.venue} size={20} />
-                        : <MapPin className="size-4" aria-hidden="true" />}
-                      {game.venue.name}
-                    </span>
-                  )}
+                  {/* The venue is the heading now, so this line places it instead of
+                      repeating it: the address, and the district it belongs to. */}
+                  <span className="flex items-center gap-1.5">
+                    {game.venue?.logoUrl
+                      ? <VenueBadge venue={game.venue} size={20} />
+                      : <MapPin className="size-4" aria-hidden="true" />}
+                    {placeOf(game)}
+                  </span>
                   <span>{dayAndDate(kickoff)}</span>
                 </p>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
+              {/* Wraps on a phone. `shrink-0` on a row of four full-size buttons is
+                  459px wide, which is 84px more than a 375px screen has -- so the page
+                  scrolled sideways and clipped the game's own heading off the left
+                  edge. These are thumb targets and must stay full size, so the row
+                  wraps rather than the buttons shrinking. */}
+              <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
                 {/* Full-size on the matchday screen. These are pressed with a thumb,
                     outdoors, in the dark -- a 32px button is the wrong control here. */}
                 <Button variant="secondary" onClick={share}>
@@ -714,10 +746,15 @@ export default function Matchday() {
           {/* Score sits above the pitch — the broadcast position. */}
           {(hasTeams || game.result) && (
             <Card className="mb-4 py-4">
+              {/* Reads the live per-team score the projection returns, for however many
+                  teams the balancer made. It used to read a `result.score.black` key
+                  only the retired mock ever produced, so it sat at 0 - 0 for the whole
+                  match while goals were being recorded underneath it. */}
               <ScoreControl
-                score={game.result?.score ?? { black: 0, white: 0 }}
-                onChange={setScore}
-                editable={canEdit}
+                teams={teams}
+                onScored={setGoals}
+                onUnscored={setGoals}
+                editable={canEdit && hasTeams}
               />
               {hasTeams && (
                 <div className="mt-3 flex items-center justify-center gap-6 text-xs text-[var(--fg-secondary)]">
@@ -757,8 +794,9 @@ export default function Matchday() {
                 </div>
               )}
 
-              {/* Teams are locked once a match is in progress anyway, so these controls
-                  are not merely noise during play -- most of them cannot be used. */}
+              {/* The team sheet stays editable during a match unless the admin locks it
+                  deliberately. It used to lock itself the moment the clock started,
+                  which is precisely when somebody turns an ankle and has to come off. */}
               <div className={cn('mb-3 flex flex-wrap items-center gap-3', !showDetails && 'hidden')}>
                 {canEdit && (
                   <FormationPicker
@@ -888,7 +926,7 @@ export default function Matchday() {
         onOpenChange={(open) => !open && setSelectedPlayerId(null)}
         player={selected}
         teamColor={selected?.teamColor}
-        isMotm={game.result?.motm?.playerId === selected?.id}
+        isMotm={game.motmPlayerId === selected?.id}
         onPatch={(patch) => patchPlayer(selected.id, patch)}
         onTogglePaid={(paid) => togglePaid(selected.id, paid)}
         onToggleMotm={() => toggleMotm(selected.id)}

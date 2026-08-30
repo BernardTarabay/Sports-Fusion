@@ -2,7 +2,7 @@
 // the shareable graphics.
 
 import { Link } from 'react-router';
-import { Trophy, TrendingUp, TrendingDown, Minus, Share2 } from 'lucide-react';
+import { Trophy, TrendingUp, TrendingDown, Share2 } from 'lucide-react';
 import { cn } from '../../lib/cn.js';
 import { toPlayerRating, isProvisional, relativeDay, compact, percent } from '../../lib/format.js';
 import { Avatar, Badge, Button, Card } from '../ui/index.jsx';
@@ -141,11 +141,14 @@ export function PlayerHero({ player, ratingHistory = [], onShare, className }) {
                 </span>
               )}
             </div>
+            {/* `player.percentile` was a mock-only field, so this line rendered as empty
+                space under the rating for every real player. The rank is the number the
+                API actually knows, and it is the one people ask about. */}
             <p className="mt-1 text-sm text-[var(--fg-secondary)]">
               {provisional
                 ? 'Still settling — play a few more games'
-                : player.percentile != null
-                  ? `Top ${player.percentile}% ${player.districtName ? `in ${player.districtName}` : ''}`
+                : player.rank
+                  ? `Ranked #${player.rank} across Sports Fusion`
                   : ''}
             </p>
           </div>
@@ -205,11 +208,31 @@ export function MatchTimeline({ matches = [], className }) {
   return (
     <ol className={cn('relative space-y-2', className)}>
       {matches.map((match, i) => {
-        const won =
-          match.score &&
-          ((match.teamColor === 'black' && match.score.black > match.score.white) ||
-            (match.teamColor === 'white' && match.score.white > match.score.black));
-        const drew = match.score && match.score.black === match.score.white;
+        // Did THIS player win?
+        //
+        // This used to read `match.score.black` and `match.score.white` -- the retired
+        // mock's shape -- and check whether the player's shirt was one of those two
+        // colours. Against the real API every score was "—" and every stripe was red,
+        // including the games they won. The result now arrives keyed by colour, and the
+        // balancer hands out six of them, so "mine" and "theirs" are looked up rather
+        // than assumed.
+        const result = match.result;
+        const mine = result && match.teamColor != null
+          ? result.score?.[match.teamColor]
+          : null;
+        const theirs = result && match.teamColor != null
+          ? Object.entries(result.score ?? {})
+              .filter(([colour]) => colour !== match.teamColor)
+              .reduce((best, [, value]) => Math.max(best, value), 0)
+          : null;
+
+        const won = mine != null && theirs != null && mine > theirs;
+        const drew = mine != null && theirs != null && mine === theirs;
+        // A game the player was not put on a team for still has a scoreline worth
+        // showing; it just cannot be won or lost by them.
+        const line = result
+          ? `${mine ?? result.home.score}–${theirs ?? result.away.score}`
+          : null;
 
         return (
           <li key={match.gameId ?? i}>
@@ -222,11 +245,15 @@ export function MatchTimeline({ matches = [], className }) {
               <span
                 className="w-1 self-stretch rounded-full shrink-0"
                 style={{
-                  background: drew
-                    ? 'var(--border-strong)'
-                    : won
-                      ? 'var(--accent)'
-                      : 'var(--danger)',
+                  // Grey, not red, when there is no result yet. An upcoming fixture is
+                  // not a defeat.
+                  background: !result || mine == null
+                    ? 'var(--border-subtle)'
+                    : drew
+                      ? 'var(--border-strong)'
+                      : won
+                        ? 'var(--accent)'
+                        : 'var(--danger)',
                 }}
                 aria-hidden="true"
               />
@@ -238,9 +265,7 @@ export function MatchTimeline({ matches = [], className }) {
 
               <div className="flex items-center gap-2 shrink-0">
                 <TeamCrest color={match.teamColor ?? 'black'} size={20} />
-                <span className="display text-lg tnum">
-                  {match.score ? `${match.score.black}–${match.score.white}` : '—'}
-                </span>
+                <span className="display text-lg tnum">{line ?? '—'}</span>
               </div>
 
               <div className="flex-1" />
@@ -251,8 +276,15 @@ export function MatchTimeline({ matches = [], className }) {
                 </Badge>
               )}
 
-              {match.rating != null && (
-                <RatingBadge mu={1500 + (match.rating - 6.5) * 150} sigma={60} size="sm" />
+              {/* No per-match rating exists. `match.rating` was a mock-only field, and
+                  reconstructing a mu from it (1500 + (rating - 6.5) * 150) was inventing
+                  a number twice over. What the row can honestly show is whether they
+                  turned up. */}
+              {match.attendance === 'no_show' && (
+                <Badge tone="danger" size="sm">No show</Badge>
+              )}
+              {match.attendance === 'late' && (
+                <Badge tone="trophy" size="sm">Late</Badge>
               )}
             </Link>
           </li>
@@ -345,19 +377,19 @@ export function ShareableMatchCard({ game, className }) {
       <div className="flex h-full flex-col">
         <div className="flex items-center justify-between">
           <p className="display text-[0.6875rem] tracking-[0.3em] text-white/60">SPORTS FUSION</p>
-          <p className="text-[0.6875rem] text-white/50">{game.districtName}</p>
+          <p className="text-[0.6875rem] text-white/50">{game.venue?.name ?? game.districtName}</p>
         </div>
 
         <div className="my-auto text-center">
           <div className="flex items-center justify-center gap-5">
             <div className="flex flex-col items-center gap-2">
-              <TeamCrest color="black" size={34} />
-              <span className="display text-6xl tnum">{game.result.score.black}</span>
+              <TeamCrest color={game.result.home.color ?? 'black'} size={34} />
+              <span className="display text-6xl tnum">{game.result.home.score}</span>
             </div>
             <span className="display text-3xl text-white/30">—</span>
             <div className="flex flex-col items-center gap-2">
-              <TeamCrest color="white" size={34} />
-              <span className="display text-6xl tnum">{game.result.score.white}</span>
+              <TeamCrest color={game.result.away.color ?? 'white'} size={34} />
+              <span className="display text-6xl tnum">{game.result.away.score}</span>
             </div>
           </div>
 
@@ -366,10 +398,9 @@ export function ShareableMatchCard({ game, className }) {
               <p className="display text-[0.6875rem] tracking-[0.22em] text-[var(--trophy)]">
                 MAN OF THE MATCH
               </p>
+              {/* No per-match rating exists -- `motm.rating` was a mock-only field and
+                  rendered as an empty line under the name. The award is the point. */}
               <p className="display mt-1 text-3xl">{game.result.motm.name}</p>
-              <p className="display mt-1 text-2xl tnum text-[var(--color-pitch-300)]">
-                {game.result.motm.rating?.toFixed(1)}
-              </p>
             </div>
           )}
         </div>

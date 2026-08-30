@@ -126,3 +126,21 @@ export const ordinal = (n) => {
   const v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
+
+/**
+ * Where a game is, in one line, without saying the same place twice.
+ *
+ * The venue name is the heading on every fixture surface, so this is the LOCATING line
+ * underneath it: the address, and the district it sits in. Venue addresses in this data
+ * are often already written as "Zouk Mosbeh, Keserwan", so appending the district
+ * blindly produced "Zouk Mosbeh, Keserwan, Keserwan" on the front page.
+ */
+export function placeOf(game) {
+  const district = game?.districtName ?? null;
+  const address = game?.venue?.address ?? null;
+  if (!address) return district ?? '';
+  if (!district) return address;
+
+  const alreadyNamed = address.toLowerCase().includes(district.toLowerCase());
+  return alreadyNamed ? address : `${address}, ${district}`;
+}

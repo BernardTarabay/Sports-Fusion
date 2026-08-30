@@ -5,7 +5,9 @@ import * as registrationService from '../registrations/service.js';
 import * as teamService from '../teams/service.js';
 import { validate, asyncHandler } from '../../middleware/validate.js';
 import { authenticate, optionalAuth } from '../../middleware/authenticate.js';
-import { requireAdmin, requireDistrictAccess, isGlobalAdmin } from '../../middleware/authorize.js';
+import {
+  requireAdmin, requireDistrictAccess, isGlobalAdmin, adminDistrictIds,
+} from '../../middleware/authorize.js';
 import { ANNOUNCEMENT_KINDS } from '../../integrations/whatsapp/announcements.js';
 import { query } from '../../database/pool.js';
 import { NotFoundError } from '../../lib/errors.js';
@@ -15,6 +17,19 @@ async function playerIdFor(userId) {
   const { rows } = await query('SELECT id FROM players WHERE user_id = $1', [userId]);
   if (rows.length === 0) throw new NotFoundError('Player profile');
   return rows[0].id;
+}
+
+/**
+ * The viewer's player id, or null.
+ *
+ * Non-throwing, unlike playerIdFor. These are the public reads: an anonymous visitor has
+ * no player, and so does an admin account with no football profile. Neither is an error,
+ * and both should see the fixture list.
+ */
+async function viewerPlayerId(req) {
+  if (!req.user) return null;
+  const { rows } = await query('SELECT id FROM players WHERE user_id = $1', [req.user.id]);
+  return rows[0]?.id ?? null;
 }
 
 const router = Router();
@@ -50,8 +65,10 @@ const createSchema = z.object({
   registrationClosesAt: z.coerce.date().optional(),
   price: z.number().nonnegative().optional(),
   currency: z.string().length(3).default('USD'),
-  title: z.string().max(120).optional(),
-  notes: z.string().max(2000).optional(),
+  // .nullish(), not .optional(): a form with an empty title sends null, and rejecting
+  // that produced a 422 on 'Expected string, received null' for a field nobody filled in.
+  title: z.string().max(120).nullish().transform((v) => v ?? undefined),
+  notes: z.string().max(2000).nullish().transform((v) => v ?? undefined),
   openImmediately: z.boolean().default(false),
 });
 
@@ -67,9 +84,18 @@ router.get(
   optionalAuth,
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
+    // A draft is an admin's private working state, so it is hidden -- but it was hidden
+    // from DISTRICT admins too, who are the people who create them. They could open
+    // registration on a game they had no way to find. A global admin sees every draft;
+    // a district admin sees their own districts'; everyone else sees none.
+    // The viewer's own registration travels with each fixture. Without it the "You're in"
+    // badge never appeared and the Games page's "Mine" tab -- which filters on
+    // `g.isRegistered` -- was permanently empty for everybody.
     const games = await gameService.listGames({
       ...req.query,
       includePrivate: isGlobalAdmin(req.user),
+      privateDistrictIds: isGlobalAdmin(req.user) ? null : adminDistrictIds(req.user),
+      viewerPlayerId: await viewerPlayerId(req),
     });
     res.json({ games });
   })
@@ -82,7 +108,7 @@ router.get(
   optionalAuth,
   validate({ params: z.object({ slug: z.string().min(3).max(60) }) }),
   asyncHandler(async (req, res) => {
-    const game = await gameService.getGameBySlug(req.params.slug);
+    const game = await gameService.getGameBySlug(req.params.slug, undefined, await viewerPlayerId(req));
     const roster = await registrationService.getRoster(game.id);
     res.json({ game, roster: { confirmed: roster.confirmed.length, waitlist: roster.waitlist.length } });
   })
@@ -93,20 +119,24 @@ router.get(
   optionalAuth,
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    const game = await gameService.getGame(req.params.id);
-    const roster = await registrationService.getRoster(game.id);
-    // Whenever teams exist, not only at 'teams_generated'. A player wants to see the team
-    // sheet while the match is on and after it has finished, and gating on one status
-    // made the pitch go blank the moment the game kicked off.
-    const teams = await teamService.getTeams(game.id);
-    res.json({
-      game,
-      roster,
-      teams,
+    const game = await gameService.getGame(req.params.id, undefined, await viewerPlayerId(req));
+
+    // Fanned out. The three reads below depend on the game's id and on nothing else, and
+    // awaiting them one after another spends three round trips of latency on a page a
+    // player opens standing outside a pitch on a mobile connection.
+    //
+    // Teams are fetched whenever they exist, not only at 'teams_generated': a player
+    // wants the team sheet while the match is on and after it has finished, and gating on
+    // one status made the pitch go blank the moment the game kicked off.
+    const [roster, teams, clock] = await Promise.all([
+      registrationService.getRoster(game.id),
+      teamService.getTeams(game.id),
       // Read-only. The match clock is not privileged information -- anyone watching the
       // game can see a clock -- and without it a player's pitch has no time on it.
-      clock: await gameService.getPublicClock(game.id),
-    });
+      gameService.getPublicClock(game.id),
+    ]);
+
+    res.json({ game, roster, teams, clock });
   })
 );
 
@@ -268,7 +298,14 @@ router.post(
   validate({
     params: idParam,
     body: z.object({
-      moves: z.array(z.object({ playerId: uuid, toTeamId: uuid })).min(1).max(30),
+      moves: z.array(z.object({
+        playerId: uuid,
+        toTeamId: uuid,
+        // Where on the tactical board. Optional, because a move can be "put them on the
+        // other team, anywhere"; when present it is a specific place, and that place may
+        // currently be empty.
+        slotIndex: z.number().int().min(0).max(29).optional(),
+      })).min(1).max(30),
     }),
   }),
   requireDistrictAccess(gameDistrict),

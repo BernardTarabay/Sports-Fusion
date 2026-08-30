@@ -156,6 +156,18 @@ if (env.GEMINI_ENABLED && !env.GEMINI_API_KEY) {
   process.exit(1);
 }
 
+if (env.NODE_ENV === 'production' && otpProvider === 'log') {
+  // Not fatal: email/password sign-in still works, and refusing to boot would take a
+  // running league offline over a feature it may not use. Loud, though -- phone sign-in
+  // is the primary way into this app and it is switched off.
+  console.warn(
+    '\n  WARNING: no OTP provider is configured (OTP_PROVIDER=log).'
+    + '\n  Phone sign-in is DISABLED in production: codes cannot be delivered, and this'
+    + '\n  build will not hand them back over the API. Set OTP_PROVIDER=whatsapp or'
+    + '\n  twilio, with the matching credentials, to switch it on.\n'
+  );
+}
+
 export const config = Object.freeze({
   env: env.NODE_ENV,
   isProduction: env.NODE_ENV === 'production',
@@ -179,7 +191,20 @@ export const config = Object.freeze({
     algorithmVersion: env.BALANCER_ALGORITHM_VERSION,
   },
 
-  otp: { provider: otpProvider },
+  otp: {
+    provider: otpProvider,
+    // Can a code actually reach a phone? 'log' cannot: it writes to the server log.
+    canDeliver: otpProvider !== 'log',
+    // May the code be handed back in the HTTP response and written to the log?
+    //
+    // ONLY outside production, and only when there is no provider at all. Returning it
+    // is how local development works without a WhatsApp account -- and it is a complete
+    // authentication bypass anywhere real, because anyone who knows a phone number can
+    // ask for its login code and be given it. The gate is on NODE_ENV, not on the
+    // provider, because the provider being unset is exactly the state a half-configured
+    // deploy is in.
+    exposeCode: otpProvider === 'log' && env.NODE_ENV !== 'production',
+  },
 
   twilio: {
     accountSid: env.TWILIO_ACCOUNT_SID,

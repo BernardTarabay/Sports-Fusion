@@ -1,11 +1,26 @@
 // Routes.
 //
-// THE GAME IS THE APPLICATION, so the matchday workspace is the destination, not a
-// leaf. `/admin` IS the pitch — there is no dashboard in front of it — and `/matchday`
-// with no id resolves the relevant fixture itself rather than asking anyone to pick a
-// district first.
+// TWO APPLICATIONS, NOT TWO VIEWS OF ONE.
 //
-// Everything below the public shell is lazily loaded.
+// This used to be a single app with an admin/player toggle in the header, and the same
+// matchday screen served both — an operations console with the controls hidden when a
+// player was looking at it. That is a bad deal for everybody. The player gets a page
+// organised around jobs that are not theirs, and the admin gets a workspace that has to
+// keep apologising for the audience it might have.
+//
+// So:
+//
+//   /        THE PLAYER APP.  Find a game, join it, see your team, see where you stand.
+//            Five destinations. Nothing about running a league appears anywhere in it.
+//
+//   /admin   THE ADMIN APP.   The pitch is the home screen, and everything needed to run
+//            a match is on it: the clock, the roster, goals, ratings, payments, the man
+//            of the match. An admin never needs to leave for the player app to do their
+//            job.
+//
+// They share components, a session and an API. They do not share a shell, a navigation,
+// or a screen. An admin who also plays can still reach the player app — the link is in
+// their account menu — because plenty of admins turn out on Saturday too.
 
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router';
@@ -16,16 +31,20 @@ import { useSession } from '../state/session.jsx';
 import Landing from '../pages/Landing.jsx';
 import Games from '../pages/Games.jsx';
 
-const Matchday = lazy(() => import('../pages/Matchday.jsx'));
+/* The player app */
+const MyGame = lazy(() => import('../pages/player/MyGame.jsx'));
 const GameDetail = lazy(() => import('../pages/GameDetail.jsx'));
 const PlayerProfile = lazy(() => import('../pages/PlayerProfile.jsx'));
 const Leaderboards = lazy(() => import('../pages/Leaderboards.jsx'));
 const Rewards = lazy(() => import('../pages/Rewards.jsx'));
 const NotFound = lazy(() => import('../pages/NotFound.jsx'));
+const Join = lazy(() => import('../pages/Join.jsx'));
+
+/* The admin app */
+const Matchday = lazy(() => import('../pages/Matchday.jsx'));
 const AdminGameManage = lazy(() => import('../pages/admin/GameManage.jsx'));
 const AdminGames = lazy(() => import('../pages/admin/Games.jsx'));
 const AdminSchedule = lazy(() => import('../pages/admin/Schedule.jsx'));
-const Join = lazy(() => import('../pages/Join.jsx'));
 const AdminInvites = lazy(() => import('../pages/admin/Invites.jsx'));
 const AdminVenues = lazy(() => import('../pages/admin/Venues.jsx'));
 const AdminDashboard = lazy(() => import('../pages/admin/Dashboard.jsx'));
@@ -64,12 +83,21 @@ export function AppRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
+        {/* Public and outside every layout: whoever follows this has no account and no
+            session, and the app chrome would only be noise. */}
+        <Route path="/join/:token" element={<Join />} />
+
+        {/* ---------------------------------------------------------------
+            THE PLAYER APP
+            --------------------------------------------------------------- */}
         <Route element={<AppLayout />}>
           <Route index element={<Landing />} />
 
-          {/* No id: the app works out which game matters. */}
-          <Route path="matchday" element={<Matchday />} />
-          <Route path="matchday/:id" element={<Matchday />} />
+          {/* One tap from anywhere to the thing a player came for. */}
+          <Route path="my-game" element={<RequireAuth><MyGame /></RequireAuth>} />
+          {/* The old path, kept because it is in muscle memory and in shared links. */}
+          <Route path="matchday" element={<Navigate to="/my-game" replace />} />
+          <Route path="matchday/:id" element={<Navigate to="/my-game" replace />} />
 
           <Route path="games" element={<Games />} />
           <Route path="games/:idOrSlug" element={<GameDetail />} />
@@ -82,12 +110,14 @@ export function AppRoutes() {
           <Route path="rewards" element={<Rewards />} />
         </Route>
 
-        {/* Public and outside every layout: whoever follows this has no account and no
-            session, and the app chrome would only be noise. */}
-        <Route path="/join/:token" element={<Join />} />
+        {/* ---------------------------------------------------------------
+            THE ADMIN APP
 
+            AdminLayout refuses anyone without a role, and every endpoint behind
+            these screens re-checks on the server. The pitch is the index: an admin
+            signing in lands on the fixture that is happening next, not on a menu.
+            --------------------------------------------------------------- */}
         <Route path="/admin" element={<AdminLayout />}>
-          {/* The pitch, not a dashboard. */}
           <Route index element={<Matchday />} />
           <Route path="matchday/:id" element={<Matchday />} />
           <Route path="schedule" element={<AdminSchedule />} />

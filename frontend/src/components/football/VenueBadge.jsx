@@ -20,10 +20,10 @@ export function VenueBadge({ venue, size = 40, className }) {
   if (!venue) return null;
   const dimension = { width: size, height: size };
 
-  if (venue.logo_url) {
+  if (venue.logoUrl) {
     return (
       <img
-        src={venue.logo_url}
+        src={venue.logoUrl}
         // Decorative next to the venue name, which is always present alongside it.
         // Announcing "Sports Zone logo" after "Sports Zone" is noise.
         alt=""

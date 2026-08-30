@@ -83,7 +83,24 @@ async function applyAttendance(client, gameId, entries = []) {
   return Object.fromEntries(rows.map((r) => [r.attendance ?? 'unknown', r.n]));
 }
 
-async function applyAwards(client, gameId, awards = [], actorUserId) {
+/**
+ * Replace this game's awards.
+ *
+ * NOT MENTIONING AWARDS IS NOT THE SAME AS CLEARING THEM.
+ *
+ * `awards` used to default to `[]`, and the submit schema defaulted it to `[]` as well,
+ * so filing a result with no awards field DELETED every award on the game. The man of the
+ * match is normally set on the matchday screen, at the final whistle, from the pitch --
+ * and filing the result is the very next thing an admin does. So the ordinary workflow
+ * was: award it, file the result, watch it silently disappear. Nothing reported an error;
+ * the award simply stopped existing, and the result announcement then had no MOTM in it.
+ *
+ * Undefined means "leave them alone". An explicit empty array still clears them, which is
+ * how an admin removes an award they gave by mistake.
+ */
+async function applyAwards(client, gameId, awards, actorUserId) {
+  if (awards === undefined || awards === null) return;
+
   await client.query('DELETE FROM match_awards WHERE game_id = $1', [gameId]);
 
   for (const awardRow of awards) {
@@ -163,7 +180,9 @@ function normaliseScores(scores, teams) {
  * change the score. Use correctResult() to change one deliberately.
  */
 export async function submitResult({
-  gameId, scores, awards = [], attendance = [], stats = [], actorUserId,
+  // `awards` has no default on purpose -- see applyAwards. Undefined leaves whatever the
+  // matchday screen already recorded in place; [] deliberately clears it.
+  gameId, scores, awards, attendance = [], stats = [], actorUserId,
 }) {
   return withTransaction(async (client) => {
     const game = await loadGameForResult(client, gameId);

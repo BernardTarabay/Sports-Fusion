@@ -10,9 +10,14 @@
 import { Link } from 'react-router';
 import { MapPin, Users, Clock } from 'lucide-react';
 import { cn } from '../../lib/cn.js';
-import { shortDay, dayNumber, monthName, time, relativeDay } from '../../lib/format.js';
+import { shortDay, dayNumber, monthName, time, relativeDay, placeOf } from '../../lib/format.js';
 import { CapacityMeter, GameStatusChip, ScoreLine } from '../football/index.jsx';
 import { Badge, Button, Card } from '../ui/index.jsx';
+import { joinability } from '../../lib/joinability.js';
+
+// Teams are named by shirt colour and the balancer can hand out six of them, so the
+// scoreline reads the colours the result carries rather than assuming black and white.
+const teamLabel = (color) => (color ? color[0].toUpperCase() + color.slice(1) : null);
 
 export function GameCard({ game, className, compact = false, showAction = true }) {
   const kickoff = new Date(game.kickoffAt);
@@ -21,6 +26,7 @@ export function GameCard({ game, className, compact = false, showAction = true }
   const isCompleted = game.status === 'completed';
   const isFull = game.confirmedCount >= game.capacity;
   const tonight = relativeDay(kickoff) === 'Tonight' && !isPast;
+  const join = joinability(game);
 
   return (
     <Card
@@ -37,7 +43,7 @@ export function GameCard({ game, className, compact = false, showAction = true }
       <Link
         to={`/games/${game.slug ?? game.id}`}
         className="absolute inset-0 z-0"
-        aria-label={`${game.districtName} game, ${relativeDay(kickoff)} at ${time(kickoff)}`}
+        aria-label={`${game.venue?.name ?? game.districtName} game, ${relativeDay(kickoff)} at ${time(kickoff)}`}
       />
 
       {tonight && (
@@ -59,16 +65,19 @@ export function GameCard({ game, className, compact = false, showAction = true }
 
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
+              {/* The GROUND is the heading. It used to be the district, with the pitch
+                  in small grey text underneath -- which is backwards for the person
+                  deciding whether to come: nobody drives to a caza. The district stays
+                  as the locating line, because "Zouk Mosbeh, Keserwan" is how you place
+                  a ground you have not been to. */}
               <div className="min-w-0">
                 <p className="display text-xl sm:text-2xl leading-tight truncate">
-                  {game.districtName}
+                  {game.venue?.name ?? game.districtName}
                 </p>
-                {game.venue && (
-                  <p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--fg-secondary)] truncate">
-                    <MapPin className="size-3 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{game.venue.name}</span>
-                  </p>
-                )}
+                <p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--fg-secondary)] truncate">
+                  <MapPin className="size-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{placeOf(game)}</span>
+                </p>
               </div>
               <GameStatusChip
                 status={game.status}
@@ -97,10 +106,10 @@ export function GameCard({ game, className, compact = false, showAction = true }
         {isCompleted && game.result ? (
           <div className="mt-4 rounded-[var(--radius-md)] bg-[var(--bg-sunken)] py-3">
             <ScoreLine
-              home="Black"
-              away="White"
-              homeScore={game.result.score.black}
-              awayScore={game.result.score.white}
+              home={teamLabel(game.result.home.color) ?? "Team A"}
+              away={teamLabel(game.result.away.color) ?? "Team B"}
+              homeScore={game.result.home.score}
+              awayScore={game.result.away.score}
               size="sm"
             />
             {game.result.motm && (
@@ -137,16 +146,26 @@ export function GameCard({ game, className, compact = false, showAction = true }
         )}
       </div>
 
-      {showAction && !isPast && !isCancelled && !game.isRegistered && (
+      {/* Only when it can actually be done. A card for a match that has kicked off used
+          to show a green "Join waiting list", which took the player to the game page and
+          then to a 409. Where the answer is no, the state is worth saying quietly rather
+          than dressing up as an action. */}
+      {showAction && !game.isRegistered && (join.canJoin || (!isPast && !isCancelled)) && (
         <div className="relative z-[2] px-4 pb-4">
-          <Button
-            to={`/games/${game.slug ?? game.id}`}
-            variant={isFull ? 'secondary' : 'primary'}
-            className="w-full"
-            size="md"
-          >
-            {isFull ? 'Join waiting list' : 'Join game'}
-          </Button>
+          {join.canJoin ? (
+            <Button
+              to={`/games/${game.slug ?? game.id}`}
+              variant={join.waitlistOnly ? 'secondary' : 'primary'}
+              className="w-full"
+              size="md"
+            >
+              {join.label}
+            </Button>
+          ) : (
+            <p className="rounded-[var(--radius-md)] bg-[var(--bg-sunken)] py-2.5 text-center text-xs font-medium text-[var(--fg-secondary)]">
+              {join.label}
+            </p>
+          )}
         </div>
       )}
     </Card>

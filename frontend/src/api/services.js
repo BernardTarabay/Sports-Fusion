@@ -280,15 +280,16 @@ export const matchdayService = {
       : api.post(`/games/${gameId}/clock`, { action }),
 
   /**
-   * There is no setScore.
+   * Guard the team sheet, or release it.
    *
-   * The score is a fold over goal events on the server, so recording who scored IS
-   * recording the score. A separate setter could only ever disagree with the scorers.
+   * A real endpoint now. This used to be a `{ locked }` flag posted to /open, which
+   * ignores it -- so the Lock button on the matchday screen changed nothing, and the
+   * board was read-only for the whole match regardless.
    */
-  setScore: (gameId, score) =>
+  setTeamsLocked: (gameId, locked) =>
     !live('matchday')
-      ? callMock('setScore', gameId, score)
-      : Promise.reject(new Error('Record the scorer; the score follows from the goals.')),
+      ? callMock('setGameStatus', gameId, 'teams_generated', { locked })
+      : api.post(`/games/${gameId}/teams/lock`, { locked }),
 
   setFormation: (gameId, formation) =>
     !live('matchday')
@@ -308,11 +309,28 @@ export const matchdayService = {
       ? callMock('setTeams', gameId, moves)
       : api.post(`/games/${gameId}/teams/override`, { moves }),
 
+  /**
+   * The whole team sheet, positions included.
+   *
+   * `slotIndex` travels with each player, so the arrangement on the tactical board is
+   * what gets saved. Without it the server knew only which team somebody was on and
+   * discarded same-team moves entirely, which is why a carefully arranged pitch reverted
+   * on the next refetch.
+   *
+   * The server only flags a player as hand-placed when their TEAM changed, so sending
+   * all twenty-two here no longer destroys the override signal the balancer learns from.
+   */
   setTeams: (gameId, teams) =>
     !live('matchday')
       ? callMock('setTeams', gameId, teams)
       : api.post(`/games/${gameId}/teams/override`, {
-          moves: teams.flatMap((t) => t.players.map((p) => ({ playerId: p.id, toTeamId: t.id }))),
+          moves: teams.flatMap((t) =>
+            t.players.map((p) => ({
+              playerId: p.id,
+              toTeamId: t.id,
+              ...(p.slotIndex == null ? {} : { slotIndex: p.slotIndex }),
+            }))
+          ),
         }),
 
   // Lifecycle that is not the clock: opening registration, calling the game off.

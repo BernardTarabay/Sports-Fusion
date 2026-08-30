@@ -121,9 +121,14 @@ export function MatchClock({ clock, onAction, canControl = false, busy = false, 
             {LABEL[state]}
             {clock?.pausedAt ? ' · stopped' : ''}
           </Badge>
+          {/* "until kickoff" was wrong twice over: the match has already kicked off, and
+              once the interval runs out it sat on "00:00 until kickoff" indefinitely,
+              which reads as a countdown that has stalled. */}
           {isHalftime && (
             <span className="text-xs tabular-nums text-[var(--fg-secondary)]">
-              {formatClock(halftimeRemaining(clock, skew))} until kickoff
+              {halftimeRemaining(clock, skew) > 0
+                ? `${formatClock(halftimeRemaining(clock, skew))} until the second half`
+                : 'Second half is due'}
             </span>
           )}
           {overtime && (

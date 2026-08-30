@@ -124,7 +124,7 @@ export function LebanonMap({ districts = [], activeSlug, onSelect, className }) 
               }}
               tabIndex={0}
               role="button"
-              aria-label={`${district.name}: ${district.activeGames} games, ${compact((district.players ?? 0) * 32)} players`}
+              aria-label={`${district.name}: ${district.activeGames ?? 0} games, ${compact(district.players ?? 0)} players`}
               className="cursor-pointer outline-none"
             >
               <path

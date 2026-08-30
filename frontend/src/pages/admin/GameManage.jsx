@@ -309,7 +309,7 @@ export default function AdminGameManage() {
             <GameStatusChip status={game.status} confirmed={game.confirmedCount} capacity={game.capacity} />
             <span className="text-sm text-[var(--fg-secondary)]">{relativeDay(game.kickoffAt)}</span>
           </div>
-          <h1 className="display text-4xl">{game.districtName}</h1>
+          <h1 className="display text-4xl">{game.venue?.name ?? game.districtName}</h1>
           <p className="mt-1 text-sm text-[var(--fg-secondary)]">
             {dayAndDate(game.kickoffAt)} · {time(game.kickoffAt)}
             {game.venue && ` · ${game.venue.name}`}
@@ -403,7 +403,7 @@ export default function AdminGameManage() {
             <Card className="p-6 text-center">
               <p className="eyebrow">Recorded</p>
               <p className="display mt-3 text-5xl tnum">
-                {game.result.score.black} — {game.result.score.white}
+                {game.result.home.score} — {game.result.away.score}
               </p>
               {game.result.motm && (
                 <p className="mt-3 text-sm text-[var(--fg-secondary)]">

@@ -6,7 +6,7 @@
 // that builds a community and one that quietly tells people not to bother.
 
 import { useState } from 'react';
-import { Trophy, Medal } from 'lucide-react';
+import { Trophy } from 'lucide-react';
 import { useLeaderboard, useDistricts, useManOfTheMonth } from '../hooks/index.js';
 import { LEADERBOARD_METRICS } from '../lib/catalogue.js';
 import {
@@ -80,6 +80,9 @@ export default function Leaderboards() {
   });
 
   const players = data?.leaderboard ?? [];
+  // Under three names there is no podium to stand on, so everybody goes in the list.
+  const podium = players.length >= 3 ? players.slice(0, 3) : [];
+  const rest = players.length >= 3 ? players.slice(3) : players;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-10">
@@ -136,18 +139,28 @@ export default function Leaderboards() {
         />
       ) : (
         <>
-          <Podium players={players} metric={metric} />
-          <Card className="divide-y divide-[var(--border-subtle)] p-1">
-            {players.slice(3).map((player) => (
-              <PlayerCard
-                key={player.id}
-                player={player}
-                rank={player.rank}
-                metric={metric}
-                href={`/players/${player.id}`}
-              />
-            ))}
-          </Card>
+          {/* The podium takes the top three; the list takes the rest.
+
+              WHICH MEANS A BOARD OF ONE OR TWO USED TO RENDER NOTHING AT ALL. The podium
+              returns null under three players and the list started at index three, so
+              anything with 1-3 entries fell between them: the page drew a heading, a
+              description, and blank space. Not the empty state either, because the board
+              was not empty. The Man of the Match board, which has exactly one name on it
+              for most of a season, was invisible for that entire time. */}
+          {podium.length === 3 && <Podium players={podium} metric={metric} />}
+          {rest.length > 0 && (
+            <Card className="divide-y divide-[var(--border-subtle)] p-1">
+              {rest.map((player) => (
+                <PlayerCard
+                  key={player.playerId}
+                  player={player}
+                  rank={player.rank}
+                  metric={metric}
+                  href={`/players/${player.playerId}`}
+                />
+              ))}
+            </Card>
+          )}
         </>
       )}
     </div>

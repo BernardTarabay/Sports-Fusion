@@ -45,15 +45,30 @@ router.get(
     }),
   }),
   asyncHandler(async (req, res) => {
+    // Scoped, like /overview above. This route sat on requireAdmin alone, so a district
+    // admin for Metn read every administrative action in the league: Keserwan's payments,
+    // who was deleted where, what another district's admin did last night. An audit trail
+    // is exactly the sort of thing that should be visible to the people it is about and
+    // to nobody else.
+    //
+    // Rows about a game are matched on that game's district; everything else -- a player
+    // record, a reward, a district -- is a global object and stays global-admin only.
+    const districtIds = isGlobalAdmin(req.user) ? null : adminDistrictIds(req.user);
+
     const { rows } = await query(
       `SELECT a.id, a.action, a.entity_type, a.entity_id, a.before, a.after, a.reason,
               a.created_at, u.display_name AS actor
          FROM admin_actions a
          LEFT JOIN users u ON u.id = a.actor_user_id
         WHERE ($1::uuid IS NULL OR a.entity_id = $1)
+          AND ($2::uuid[] IS NULL OR EXISTS (
+                SELECT 1 FROM games g
+                 WHERE g.id = a.entity_id AND g.district_id = ANY($2)))
         ORDER BY a.created_at DESC
-        LIMIT $2`,
-      [req.query.entityId ?? null, req.query.limit]
+        LIMIT $3`,
+      // NOT `districtIds?.length ? districtIds : null`: an empty list means this admin
+      // administers no district, and the answer to that is no rows, not all of them.
+      [req.query.entityId ?? null, districtIds, req.query.limit]
     );
     res.json({
       actions: rows.map((r) => ({
