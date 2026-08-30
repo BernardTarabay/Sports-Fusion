@@ -439,6 +439,14 @@ export const adminService = {
   deletePlayer: (id) => (USE_MOCK ? callMock('deletePlayer', id) : api.del(`/players/${id}`)),
   generateTeams: (id, body) =>
     USE_MOCK ? callMock('generateTeams', id, body) : api.post(`/games/${id}/teams/generate`, body),
+  /**
+   * Two teams without balancing them, for a game that has not filled.
+   *
+   * The balancer needs a full roster and says so; this is how a sheet exists before
+   * then, so positions and formations can be arranged in the days beforehand.
+   */
+  draftTeams: (id) =>
+    USE_MOCK ? callMock('generateTeams', id, {}) : api.post(`/games/${id}/teams/draft`, {}),
   overrideTeams: (id, moves) =>
     USE_MOCK ? callMock('overrideTeams', id, moves) : api.post(`/games/${id}/teams/override`, { moves }),
   submitResult: (id, body) =>

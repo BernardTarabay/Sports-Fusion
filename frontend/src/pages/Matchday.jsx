@@ -320,17 +320,36 @@ export default function Matchday() {
 
   const setFormation = async (value) => {
     pushHistory(`Formation back to ${formation}`);
-    // Refit both sides so changing shape repositions players rather than just
-    // relabelling them. Anyone already in a slot that survives stays put.
-    const refitted = teams.map((team) => ({
-      ...team,
-      players: fitSquadToFormation(team.players, game.teamSize, value).map((p, slotIndex) => ({
-        ...p, position: p.slot?.label ?? p.position, slotIndex,
-      })),
-    }));
-    const { game: withFormation } = await matchdayService.setFormation(game.id, value);
-    const { game: next } = await matchdayService.setTeams(game.id, refitted);
-    applyGame({ ...withFormation, ...next, formation: value });
+    try {
+      const { game: withFormation } = await matchdayService.setFormation(game.id, value);
+
+      // WITH NO TEAMS YET, SAVING THE SHAPE IS THE WHOLE JOB.
+      //
+      // This always followed up with setTeams, which posts one move per player. On a
+      // game whose teams do not exist yet that is an empty list, the endpoint requires
+      // at least one, and the 422 rejected the whole call -- so picking a formation
+      // before the game filled did nothing at all, silently, including the part that
+      // would have worked. The preview redraws itself from `formation`, so there is
+      // nothing to send.
+      if (teams.length !== 2) {
+        applyGame({ ...withFormation, formation: value });
+        return;
+      }
+
+      // Refit both sides so changing shape repositions players rather than just
+      // relabelling them. Anyone already in a slot that survives stays put.
+      const refitted = teams.map((team) => ({
+        ...team,
+        players: fitSquadToFormation(team.players, game.teamSize, value).map((p, slotIndex) => ({
+          ...p, position: p.slot?.label ?? p.position, slotIndex,
+        })),
+      }));
+      const { game: next } = await matchdayService.setTeams(game.id, refitted);
+      applyGame({ ...withFormation, ...next, formation: value });
+    } catch (error) {
+      // It used to reject into nothing: the picker snapped back with no explanation.
+      toast.error('Could not change the formation', { description: error.message });
+    }
   };
 
   /**
@@ -368,14 +387,9 @@ export default function Matchday() {
     const materialised = teams.length !== 2;
     if (sheet.length !== 2) {
       const colour = pitchTeams.find((t) => t.id === teamId)?.color;
-      const created = await materialiseTeams({
-        onError: (error) =>
-          toast.error('Positions cannot be saved yet', {
-            description: `${error.message}. The lineup on screen is a preview until teams are generated.`,
-          }),
-      });
+      const created = await draftSheet();
       if (!created) return;
-      sheet = created.teams;
+      sheet = created;
       teamId = (sheet.find((t) => t.color === colour) ?? sheet[0]).id;
     }
 
@@ -424,10 +438,13 @@ export default function Matchday() {
       occupant && occupant.id !== playerId
         ? `${player.name} ↔ ${occupant.name}`
         : `${player.name} moved`,
-      // No Undo offered on the drag that CREATED the teams: there is no earlier sheet to
+      // No Undo offered on the drag that CREATED the sheet: there is no earlier sheet to
       // go back to, and an Undo button that does nothing is worse than no button.
+      //
+      // "Generated" would be a lie -- the balancer has not run and cannot until the game
+      // is full. The sides are simply saved as they were already drawn.
       materialised
-        ? { description: 'Teams generated, and your move applied on top.' }
+        ? { description: 'Team sheet saved, with your move on it. Balance them once the game fills.' }
         : { action: { label: 'Undo', onClick: () => undo() } }
     );
   };
@@ -439,7 +456,33 @@ export default function Matchday() {
    * created sheet BACK to place a player on it, not just applied to the screen.
    * Returns null when it could not be done, so callers can stop quietly.
    */
-  const materialiseTeams = async ({ onError } = {}) => {
+  /**
+   * Make the board on screen real, without pretending it is balanced.
+   *
+   * This used to run the BALANCER, which refuses anything short of a full roster -- so
+   * dragging a player on a game with eight people got "Only 8 of 22 players are
+   * confirmed", which is a true sentence and not an answer to what was asked. Drafting
+   * seats exactly who is on screen, in the order they are already drawn, so the move
+   * lands on the arrangement the admin is looking at. Balancing stays a separate,
+   * deliberate button.
+   *
+   * Returns the teams, or null when it could not be done.
+   */
+  const draftSheet = async () => {
+    setGenerating(true);
+    try {
+      const { game: next, teams: drafted } = await adminService.draftTeams(game.id);
+      applyGame(next);
+      return next?.teams ?? drafted;
+    } catch (error) {
+      toast.error('Could not set up the teams', { description: error.message });
+      return null;
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const materialiseTeams = async () => {
     setGenerating(true);
     try {
       const result = await adminService.generateTeams(game.id, {});
@@ -450,9 +493,7 @@ export default function Matchday() {
       applyGame(next);
       return { teams: next?.teams ?? result.teams, considered: result.candidatesEvaluated };
     } catch (error) {
-      // The caller frames it, because "Only 8 of 22 players are confirmed" makes sense
-      // under a Generate button and is a non-sequitur after a drag.
-      (onError ?? ((e) => toast.error(e.message)))(error);
+      toast.error(error.message);
       return null;
     } finally {
       setGenerating(false);
@@ -653,12 +694,14 @@ export default function Matchday() {
             {/* Collapsed, the header is one line: which game, and a way back to the rest. */}
             {!showDetails && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {/* Badge, then ground. This printed the venue name TWICE -- once as the
+                    heading and again beside it in grey -- left over from when the
+                    heading was the district and the venue was the small print. */}
+                <VenueBadge venue={game.venue} size={28} className="shrink-0" />
                 <span className="display text-2xl leading-none">
                   {game.venue?.name ?? game.districtName}
                 </span>
-                {game.venue && (
-                  <span className="text-sm text-[var(--fg-secondary)]">{game.venue.name}</span>
-                )}
+                <span className="text-sm text-[var(--fg-secondary)]">{placeOf(game)}</span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -687,20 +730,26 @@ export default function Matchday() {
                   )}
                 </div>
 
-                <h1 className="display text-4xl leading-none sm:text-6xl">
-                  {game.venue?.name ?? game.districtName}
-                </h1>
+                {/* THE BADGE BELONGS TO THE GROUND, SO IT SITS WITH THE GROUND'S NAME.
+                    It was down on the line below at 20px, next to "Zouk Mosbeh,
+                    Keserwan" -- which reads as a badge for the district, and Keserwan
+                    does not have a crest. A venue logo next to anything but the venue
+                    name is just a decoration in the wrong place. */}
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <VenueBadge venue={game.venue} size={null} className="size-11 shrink-0 sm:size-16" />
+                  <h1 className="display min-w-0 text-4xl leading-none sm:text-6xl">
+                    {game.venue?.name ?? game.districtName}
+                  </h1>
+                </div>
 
                 <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--fg-secondary)]">
                   <span className="flex items-center gap-1.5 font-semibold text-[var(--fg-primary)]">
                     <Clock className="size-4" aria-hidden="true" /> {time(kickoff)}
                   </span>
-                  {/* The venue is the heading now, so this line places it instead of
+                  {/* The venue is the heading, so this line places it instead of
                       repeating it: the address, and the district it belongs to. */}
                   <span className="flex items-center gap-1.5">
-                    {game.venue?.logoUrl
-                      ? <VenueBadge venue={game.venue} size={20} />
-                      : <MapPin className="size-4" aria-hidden="true" />}
+                    <MapPin className="size-4 shrink-0" aria-hidden="true" />
                     {placeOf(game)}
                   </span>
                   <span>{dayAndDate(kickoff)}</span>

@@ -67,7 +67,7 @@ export function GameCard({ game, className, compact = false, showAction = true }
           {/* The venue's own badge. Admins upload these and they only ever appeared on
               the game page -- the card is where a fixture is actually recognised, and a
               logo is quicker to recognise than a line of text in a scroll. */}
-          <VenueBadge venue={game.venue} size={36} className="mt-0.5 sm:size-10" />
+          <VenueBadge venue={game.venue} size={null} className="mt-0.5 size-9 sm:size-11" />
 
           <div className="min-w-0 flex-1">
             {/* The GROUND is the heading. It used to be the district, with the pitch
@@ -75,16 +75,13 @@ export function GameCard({ game, className, compact = false, showAction = true }
                 deciding whether to come: nobody drives to a caza. The district stays as
                 the locating line, because "Zouk Mosbeh, Keserwan" is how you place a
                 ground you have not been to. */}
-            <div className="flex items-start justify-between gap-2">
-              <p className="display min-w-0 text-xl leading-tight line-clamp-2 sm:text-2xl">
-                {game.venue?.name ?? game.districtName}
-              </p>
-              <GameStatusChip
-                status={game.status}
-                confirmed={game.confirmedCount}
-                capacity={game.capacity}
-              />
-            </div>
+            {/* The name gets the whole width. It shared this row with the status chip,
+                which on a phone left "Eleven Football Pro Academy" about 150px and
+                clipped it mid-word -- and the chip is a detail, while the ground is the
+                thing being recognised. The chip moved down to the meta line. */}
+            <p className="display text-xl leading-tight line-clamp-2 sm:text-2xl">
+              {game.venue?.name ?? game.districtName}
+            </p>
 
             {/* Its own row, not tucked beside the status chip. Sharing that row left it
                 132px wide on a phone, so "Zouk Mosbeh, Keserwan" clipped to
@@ -95,6 +92,11 @@ export function GameCard({ game, className, compact = false, showAction = true }
             </p>
 
             <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <GameStatusChip
+                status={game.status}
+                confirmed={game.confirmedCount}
+                capacity={game.capacity}
+              />
               <span className="flex items-center gap-1.5 font-semibold tnum">
                 <Clock className="size-3.5 text-[var(--fg-muted)]" aria-hidden="true" />
                 {time(kickoff)}

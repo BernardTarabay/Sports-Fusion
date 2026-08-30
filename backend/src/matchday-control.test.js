@@ -81,6 +81,114 @@ test.before(async () => {
 test.after(async () => { await server?.stop(); });
 
 // ---------------------------------------------------------------------------
+// A team sheet before the game is full
+//
+// The balancer needs exactly team_size * team_count confirmed players and refuses
+// anything less, which is right for balancing. It was also the ONLY way for teams to
+// exist -- so an admin arranging the board days ahead, with eight of twenty-two people
+// signed up, could not place anybody: every drag came back "Only 8 of 22 players are
+// confirmed", and picking a formation posted an empty move list and 422'd, silently
+// undoing itself. Both are the same missing capability: having teams without claiming
+// they are balanced.
+// ---------------------------------------------------------------------------
+
+test('a partial roster can still be given two teams', async () => {
+  const game = await admin.post('/api/games', {
+    districtId: ctx.districtId,
+    kickoffAt: new Date(Date.now() + 4 * 3600_000).toISOString(),
+    capacity: 6, teamSize: 3, teamCount: 2, openImmediately: true,
+  });
+  const gameId = game.body.game.id;
+
+  // Three of six. The balancer will not touch this.
+  for (const playerId of ctx.players.slice(0, 3)) {
+    await admin.post(`/api/games/${gameId}/roster`, { playerId });
+  }
+
+  const refused = await admin.post(`/api/games/${gameId}/teams/generate`, {});
+  assert.equal(refused.status, 409, 'the balancer still refuses a partial roster');
+
+  const drafted = await admin.post(`/api/games/${gameId}/teams/draft`, {});
+  assert.equal(drafted.status, 201);
+  assert.equal(drafted.body.teams.length, 2);
+  assert.equal(
+    drafted.body.teams.flatMap((t) => t.players).length, 3,
+    'everybody who joined is on the sheet, and nobody who has not is'
+  );
+  for (const player of drafted.body.teams.flatMap((t) => t.players)) {
+    assert.notEqual(player.slotIndex, null, 'a drafted player stands somewhere');
+  }
+
+  ctx.partialGameId = gameId;
+});
+
+test('a drafted sheet does not claim to have been balanced', async () => {
+  const { rows } = await server.db.query(
+    'SELECT run_id FROM game_teams WHERE game_id = $1', [ctx.partialGameId]
+  );
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.run_id, null, 'no generation run, because none happened');
+  }
+
+  const { rows: runs } = await server.db.query(
+    'SELECT id FROM team_generation_runs WHERE game_id = $1', [ctx.partialGameId]
+  );
+  assert.deepEqual(runs, [], 'and no fabricated score for anyone to read later');
+});
+
+test('drafting twice does not produce two team sheets', async () => {
+  const again = await admin.post(`/api/games/${ctx.partialGameId}/teams/draft`, {});
+  assert.equal(again.status, 200, 'the second call is a no-op, not a conflict');
+  assert.equal(again.body.created, false);
+
+  const { rows } = await server.db.query(
+    'SELECT id FROM game_teams WHERE game_id = $1', [ctx.partialGameId]
+  );
+  assert.equal(rows.length, 2, 'still exactly two teams');
+});
+
+test('a player can be dropped onto an empty slot on a partial sheet', async () => {
+  const before = await admin.get(`/api/games/${ctx.partialGameId}/matchday`);
+  const team = before.body.game.teams.find((t) => t.players.length > 0);
+  const player = team.players[0];
+  const taken = new Set(team.players.map((p) => p.slotIndex));
+  const emptySlot = [0, 1, 2].find((i) => !taken.has(i));
+  assert.notEqual(emptySlot, undefined, 'a short squad has a gap to aim at');
+
+  const moved = await admin.post(`/api/games/${ctx.partialGameId}/teams/override`, {
+    moves: [{ playerId: player.id, toTeamId: team.id, slotIndex: emptySlot }],
+  });
+  assert.equal(moved.status, 200);
+
+  const after = await admin.get(`/api/games/${ctx.partialGameId}/matchday`);
+  const moot = after.body.game.teams
+    .flatMap((t) => t.players)
+    .find((p) => p.id === player.id);
+  assert.equal(moot.slotIndex, emptySlot, 'and they stayed where they were put');
+});
+
+test('the formation can be set before the teams are full', async () => {
+  const res = await admin.post(`/api/games/${ctx.partialGameId}/formation`, { formation: '3-5-2' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.game.formation, '3-5-2');
+
+  const reread = await admin.get(`/api/games/${ctx.partialGameId}/matchday`);
+  assert.equal(reread.body.game.formation, '3-5-2', 'and it survives a refetch');
+});
+
+test('an empty roster has nothing to draft', async () => {
+  const game = await admin.post('/api/games', {
+    districtId: ctx.districtId,
+    kickoffAt: new Date(Date.now() + 5 * 3600_000).toISOString(),
+    capacity: 6, teamSize: 3, teamCount: 2, openImmediately: true,
+  });
+  const res = await admin.post(`/api/games/${game.body.game.id}/teams/draft`, {});
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error.code, 'EMPTY_ROSTER');
+});
+
+// ---------------------------------------------------------------------------
 // Positions
 // ---------------------------------------------------------------------------
 

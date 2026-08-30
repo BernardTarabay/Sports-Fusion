@@ -12,6 +12,7 @@ import {
   Card, Button, Input, Select, Segmented, Skeleton, EmptyState, SectionHeading, StatCard, Badge,
 } from '../../components/ui/index.jsx';
 import { CapacityMeter, GameStatusChip, RatingBadge, PositionChip } from '../../components/football/index.jsx';
+import { VenueBadge } from '../../components/football/VenueBadge.jsx';
 import { Avatar } from '../../components/ui/index.jsx';
 import { BarSeries, Donut } from '../../components/charts/index.jsx';
 import { relativeDay, time, percent, compact } from '../../lib/format.js';
@@ -44,7 +45,7 @@ function GamesTable() {
             <caption className="sr-only">Games, {when}</caption>
             <thead>
               <tr className="border-b border-[var(--border-subtle)] text-left">
-                {['When', 'District', 'Venue', 'Capacity', 'Status', ''].map((heading) => (
+                {['When', 'Venue', 'District', 'Capacity', 'Status', ''].map((heading) => (
                   <th key={heading} scope="col" className="px-4 py-2.5 text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wide">
                     {heading}
                   </th>
@@ -58,13 +59,17 @@ function GamesTable() {
                     <p className="font-medium">{relativeDay(game.kickoffAt)}</p>
                     <p className="text-xs text-[var(--fg-muted)] tnum">{time(game.kickoffAt)}</p>
                   </td>
+                  {/* The GROUND, with its badge. This column was headed "District" and
+                      showed the venue name with the district tacked on in grey, and then
+                      the next column showed the venue name AGAIN -- two columns for one
+                      fact and a heading that named the other one. */}
                   <td className="px-4 py-3 font-medium">
-                    {game.venue?.name ?? game.districtName}
-                    <span className="ml-1.5 text-xs font-normal text-[var(--fg-muted)]">
-                      {game.districtName}
+                    <span className="flex items-center gap-2">
+                      <VenueBadge venue={game.venue} size={24} />
+                      <span className="min-w-0 truncate">{game.venue?.name ?? game.districtName}</span>
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-[var(--fg-secondary)]">{game.venue?.name ?? '—'}</td>
+                  <td className="px-4 py-3 text-[var(--fg-secondary)]">{game.districtName}</td>
                   <td className="w-40 px-4 py-3">
                     <CapacityMeter
                       confirmed={game.confirmedCount}

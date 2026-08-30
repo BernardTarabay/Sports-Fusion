@@ -344,6 +344,87 @@ async function settleSlots(client, gameId, teamIds) {
   }
 }
 
+/**
+ * Two teams for a game that is not full yet.
+ *
+ * THE BALANCER IS NOT THE ONLY WAY TO HAVE TEAMS.
+ *
+ * `generateTeams` needs exactly team_size * team_count confirmed players, because
+ * enumerating every split of a partial squad balances against a squad that does not
+ * exist. That is right for balancing and wrong as a precondition for HAVING teams at
+ * all -- an admin arranging the board on Wednesday for a Saturday game has eight people
+ * and a formation, and every attempt to place one of them was refused with "only 8 of 22
+ * players are confirmed", which is true and is not an answer.
+ *
+ * So this makes the sheet real without claiming it is balanced: the same snake draft the
+ * preview already draws (1,2,2,1 on rating, which splits the strongest two and swaps
+ * back), seated in slot order. `run_id` stays NULL -- there was no run, and inventing one
+ * would put a fabricated score in front of whoever reads it later.
+ *
+ * Idempotent: if the teams are already there it returns them untouched, so two quick
+ * drags cannot produce two team sheets.
+ */
+export async function draftTeams({ gameId, actorUserId }) {
+  return withTransaction(async (client) => {
+    const { rows: gameRows } = await client.query(
+      `SELECT id, status, team_size, team_count FROM games WHERE id = $1 FOR UPDATE`,
+      [gameId]
+    );
+    if (gameRows.length === 0) throw new NotFoundError('Game');
+    const game = gameRows[0];
+    if (game.status === 'cancelled') throw new ConflictError('That game is cancelled', 'GAME_CANCELLED');
+    if (game.status === 'completed') throw new ConflictError('That game has been played', 'GAME_COMPLETED');
+
+    const { rows: existing } = await client.query(
+      `SELECT id FROM game_teams WHERE game_id = $1`, [gameId]
+    );
+    if (existing.length > 0) return { teams: await getTeams(gameId, client), created: false };
+
+    const players = await loadConfirmedPlayers(client, gameId);
+    if (players.length === 0) {
+      throw new ConflictError('Nobody has joined this game yet', 'EMPTY_ROSTER');
+    }
+
+    const size = game.team_size;
+    const sides = [[], []];
+    [...players]
+      .sort((a, b) => b.ratingMu - a.ratingMu)
+      .forEach((player, i) => {
+        // 0,1,1,0,0,1,1,0 -- the same order the provisional board on screen used, so
+        // making it real does not rearrange it under the admin's hands.
+        const side = Math.floor(i / 2) % 2 === 0 ? i % 2 : 1 - (i % 2);
+        if (sides[side].length < size) sides[side].push(player);
+        else sides[1 - side].push(player);
+      });
+
+    for (const [i, squad] of sides.entries()) {
+      const { rows: teamRows } = await client.query(
+        `INSERT INTO game_teams (game_id, run_id, color, strength)
+         VALUES ($1, NULL, $2, $3) RETURNING id`,
+        [gameId, TEAM_COLORS[i], squad.reduce((total, p) => total + p.ratingMu, 0)]
+      );
+      for (const [slotIndex, player] of squad.entries()) {
+        await client.query(
+          `INSERT INTO team_players (
+             team_id, game_id, player_id, assigned_position, slot_index,
+             rating_mu_at_assignment, rating_sigma_at_assignment)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [teamRows[0].id, gameId, player.id, player.preferredPosition ?? null, slotIndex,
+           player.ratingMu, player.ratingSigma]
+        );
+      }
+    }
+
+    await client.query(
+      `INSERT INTO admin_actions (actor_user_id, action, entity_type, entity_id, before, after)
+       VALUES ($1, 'draft_teams', 'game', $2, NULL, $3::jsonb)`,
+      [actorUserId ?? null, gameId, JSON.stringify({ players: players.length, balanced: false })]
+    );
+
+    return { teams: await getTeams(gameId, client), created: true };
+  });
+}
+
 export async function applyOverride({ gameId, moves, actorUserId }) {
   return withTransaction(async (client) => {
     const { rows: teamRows } = await client.query(

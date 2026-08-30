@@ -16,9 +16,17 @@ export function venueInitials(name = '') {
   return source.slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
 }
 
+/**
+ * @param {object|null} venue
+ * @param {number|null} size
+ *   Pixels, as an inline style. Pass `null` to size it from `className` instead --
+ *   an inline width beats any class, so `size={36} className="sm:size-10"` silently
+ *   pinned the badge at 36 and the responsive half never ran. Anything that wants to
+ *   grow on a wider screen has to opt out of the inline size.
+ */
 export function VenueBadge({ venue, size = 40, className }) {
   if (!venue) return null;
-  const dimension = { width: size, height: size };
+  const dimension = size == null ? undefined : { width: size, height: size };
 
   if (venue.logoUrl) {
     return (
@@ -43,7 +51,10 @@ export function VenueBadge({ venue, size = 40, className }) {
         className
       )}
     >
-      <span className="display leading-none" style={{ fontSize: size * 0.36 }}>
+      <span
+        className={cn('display leading-none', size == null && 'text-[0.8rem] sm:text-base')}
+        style={size == null ? undefined : { fontSize: size * 0.36 }}
+      >
         {venueInitials(venue.name)}
       </span>
     </div>

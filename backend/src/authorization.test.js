@@ -78,6 +78,7 @@ const ADMIN_ONLY = () => [
   ['POST', `/api/games/${ctx.gameId}/cancel`, { reason: 'no' }],
   ['POST', `/api/games/${ctx.gameId}/clock`, { action: 'start' }],
   ['POST', `/api/games/${ctx.gameId}/teams/generate`, {}],
+  ['POST', `/api/games/${ctx.gameId}/teams/draft`, {}],
   ['POST', `/api/games/${ctx.gameId}/teams/override`, { moves: [{ playerId: ctx.playerId, toTeamId: ctx.gameId }] }],
   ['GET', `/api/games/${ctx.gameId}/teams/explain`],
   ['GET', `/api/games/${ctx.gameId}/roster`],

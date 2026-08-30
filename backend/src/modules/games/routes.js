@@ -283,6 +283,27 @@ router.post(
   })
 );
 
+// Teams WITHOUT the balancer.
+//
+// /teams/generate refuses anything short of a full roster, which is correct for a
+// balanced split and useless as the only way to have a team sheet at all. This seats
+// whoever has joined so an admin can arrange the board days before the game fills.
+router.post(
+  '/:id/teams/draft',
+  authenticate,
+  requireAdmin,
+  validate({ params: idParam }),
+  requireDistrictAccess(gameDistrict),
+  asyncHandler(async (req, res) => {
+    const result = await teamService.draftTeams({
+      gameId: req.params.id, actorUserId: req.user.id,
+    });
+    res.status(result.created ? 201 : 200).json({
+      ...result, game: await matchdayService.getMatchday(req.params.id),
+    });
+  })
+);
+
 router.get(
   '/:id/teams',
   optionalAuth,
